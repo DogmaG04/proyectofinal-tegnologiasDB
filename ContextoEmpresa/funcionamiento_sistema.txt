@@ -1,0 +1,31 @@
+1. Ingresar un Socio
+1. Se llena un formulario con datos del socio (nombre, identificación, fecha nacimiento, dirección, etc.)
+2. El sistema guarda sus datos en la tabla socios
+3. Se le puede abrir una cuenta de ahorro (cuentas_ahorro) vinculada a su ID
+4. El socio queda activo en el sistema
+
+2. Solicitar un Préstamo
+1. El socio (o el gerente) solicita un crédito en la tabla solicitudes_credito
+2. Se elige el tipo de crédito (personal, empresarial, educativo, médico, agrícola)
+3. El sistema verifica al socio y su historial
+4. Si es aprobada, se crea el préstamo (prestamos) con monto, plazo y cuotas
+5. Se generan automáticamente las cuotas (cuotas_amortizacion) en la tabla de amortización
+
+3. Movimiento de Dinero
+- Depósitos y retiros en las cuentas de ahorro
+- Pago de cuotas registra cada pago en transacciones
+- El sistema lleva el control de morosidad a través de estado en los préstamos
+
+4. Reportes
+- Vista vw_cartera_mora: Muestra qué socios tienen préstamos en mora
+- Vista vw_resumen_saldos_socio: Saldos totales, cuentas activas/cerradas y préstamos
+
+Flujo Sencillo:
+Socio → Cuenta de Ahorro
+        ↑
+Préstamo → Cuotas (amortización)
+        ↑
+Pagos → Transacciones (historial)
+
+Todo está vinculado por IDs (socio_id, prestamo_id, cuenta_ahorro_id)
+El sistema está diseñado para manejar todo el ciclo de vida: desde que un socio se registra hasta el pago final de sus préstamos, con control de morosidad y reportes financieros.

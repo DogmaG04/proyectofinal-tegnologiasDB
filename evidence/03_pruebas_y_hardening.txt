@@ -1,0 +1,230 @@
+============================================================
+PRUEBAS DE MIGRACION Y HARDENING - PostgreSQL 16
+Cooperativa de Ahorro y Credito Horizonte PyME S.R.L.
+Generado: 2026-11-22 21:37:43 -04
+============================================================
+
+[2026-11-22 21:37:43] Esperando servicios ...
+[2026-11-22 21:37:43] Servicio db-destino healthy
+[2026-11-22 21:37:43] Servicio db-origen healthy
+== 1. Parametros de seguridad activos ==
+PASS  SHOW ssl                                                   (valor=on)
+PASS  SHOW password_encryption                                   (valor=scram-sha-256)
+PASS  SHOW log_connections                                       (valor=on)
+PASS  SHOW log_disconnections                                    (valor=on)
+PASS  SHOW log_statement                                         (valor=ddl)
+
+== 2. Reglas efectivas de pg_hba.conf ==
+ line_number |  type   |       database        |     user_name      | address |  auth_method  
+-------------+---------+-----------------------+--------------------+---------+---------------
+           9 | local   | {all}                 | {all}              |         | peer
+          10 | local   | {postgres}            | {all}              |         | peer
+          12 | hostssl | {coop_horizonte_core} | {admin_dba}        | 0.0.0.0 | scram-sha-256
+          13 | hostssl | {coop_horizonte_core} | {admin_dba}        | ::      | scram-sha-256
+          14 | hostssl | {coop_horizonte_core} | {app_core_rw}      | 0.0.0.0 | scram-sha-256
+          15 | hostssl | {coop_horizonte_core} | {app_core_rw}      | ::      | scram-sha-256
+          16 | hostssl | {coop_horizonte_core} | {auditor_ro}       | 0.0.0.0 | scram-sha-256
+          17 | hostssl | {coop_horizonte_core} | {auditor_ro}       | ::      | scram-sha-256
+          18 | hostssl | {coop_horizonte_core} | {migration_loader} | 0.0.0.0 | scram-sha-256
+          19 | hostssl | {coop_horizonte_core} | {migration_loader} | ::      | scram-sha-256
+          22 | hostssl | {coop_horizonte_core} | {nicolas}          | 0.0.0.0 | scram-sha-256
+          23 | hostssl | {coop_horizonte_core} | {nicolas}          | ::      | scram-sha-256
+          24 | hostssl | {coop_horizonte_core} | {joaquin}          | 0.0.0.0 | scram-sha-256
+          25 | hostssl | {coop_horizonte_core} | {joaquin}          | ::      | scram-sha-256
+          26 | hostssl | {coop_horizonte_core} | {david}            | 0.0.0.0 | scram-sha-256
+          27 | hostssl | {coop_horizonte_core} | {david}            | ::      | scram-sha-256
+          28 | hostssl | {coop_horizonte_core} | {gustavo}          | 0.0.0.0 | scram-sha-256
+          29 | hostssl | {coop_horizonte_core} | {gustavo}          | ::      | scram-sha-256
+(18 rows)
+
+
+== 3. Rechazo de conexiones sin SSL ==
+PASS  Conexion TCP sin SSL rechazada
+PASS  Conexion TCP con SSL (sslmode=require)
+PASS  Conexion TCP con SSL verificado (sslmode=verify-ca)
+PASS  Acceso remoto directo de postgres rechazado
+
+== 4. Roles y privilegios de minimo privilegio ==
+     rolname      | rolsuper | rolcanlogin | rolcreatedb | rolcreaterole | rolinherit 
+------------------+----------+-------------+-------------+---------------+------------
+ admin_dba        | f        | t           | t           | t             | f
+ app_core_rw      | f        | t           | f           | f             | f
+ auditor_ro       | f        | t           | f           | f             | f
+ migration_loader | f        | t           | f           | f             | f
+(4 rows)
+
+PASS  admin_dba no es superusuario                               (valor=f)
+PASS  app_core_rw no es superusuario                             (valor=f)
+PASS  app_core_rw puede iniciar sesion                           (valor=t)
+PASS  auditor_ro puede iniciar sesion                            (valor=t)
+PASS  PUBLIC sin CREATE en schema public                         (valor=f)
+PASS  auditor_ro con USAGE en public                             (valor=t)
+PASS  app_core_rw sin CREATE en public                           (valor=f)
+PASS  auditor_ro no lee socios                                   (valor=f)
+PASS  auditor_ro lee vw_socios_audit                             (valor=t)
+PASS  app_core_rw inserta en socios                              (valor=t)
+PASS  app_core_rw no trunca socios                               (valor=f)
+
+== 4.1 Rol de carga (migration_loader) ==
+PASS  migration_loader no es superusuario                        (valor=f)
+PASS  migration_loader puede iniciar sesion                      (valor=t)
+PASS  migration_loader sin CREATEDB                              (valor=f)
+PASS  migration_loader sin CREATEROLE                            (valor=f)
+PASS  migration_loader sin USAGE en public                       (valor=f)
+PASS  migration_loader no lee socios                             (valor=f)
+PASS  migration_loader no trunca socios                          (valor=f)
+PASS  admin_dba puede truncar socios                             (valor=t)
+PASS  schema stg eliminado tras la migracion                     (valor=f)
+PASS  migration_loader conecta pero no lee public.socios
+
+== 4.2 Integrantes del equipo (perfil admin) ==
+ rolname | rolsuper | rolcanlogin | rolcreatedb | rolcreaterole 
+---------+----------+-------------+-------------+---------------
+ david   | f        | t           | t           | t
+ gustavo | f        | t           | t           | t
+ joaquin | f        | t           | t           | t
+ nicolas | f        | t           | t           | t
+(4 rows)
+
+PASS  nicolas existe y puede iniciar sesion                      (valor=t)
+PASS  nicolas no es superusuario                                 (valor=f)
+PASS  nicolas con privilegios de admin en socios                 (valor=t)
+PASS  nicolas conecta por TLS como admin
+PASS  joaquin existe y puede iniciar sesion                      (valor=t)
+PASS  joaquin no es superusuario                                 (valor=f)
+PASS  joaquin con privilegios de admin en socios                 (valor=t)
+PASS  joaquin conecta por TLS como admin
+PASS  david existe y puede iniciar sesion                        (valor=t)
+PASS  david no es superusuario                                   (valor=f)
+PASS  david con privilegios de admin en socios                   (valor=t)
+PASS  david conecta por TLS como admin
+PASS  gustavo existe y puede iniciar sesion                      (valor=t)
+PASS  gustavo no es superusuario                                 (valor=f)
+PASS  gustavo con privilegios de admin en socios                 (valor=t)
+PASS  gustavo conecta por TLS como admin
+
+== 5. Enmascaramiento de datos sensibles ==
+****6-OR|****4877, ****9292
+****4-OR|****7514
+****3-LP|****4895, ****1669
+****2-SC|****8548, ****5186
+****1-CH|****0029, ****7335
+PASS  vw_socios_audit devuelve valores enmascarados
+PASS  No se detectaron identificadores completos en la vista
+PASS  auditor_ro no puede leer la tabla socios
+
+== 6. Conteos origen vs destino ==
+Tabla                      Origen  Destino Estado
+------------------------ -------- -------- ------
+sucursales                      5        5 OK
+socios                         55       55 OK
+cuentas_ahorro                 66       66 OK
+tipos_credito                   5        5 OK
+solicitudes_credito            50       50 OK
+prestamos                      32       32 OK
+cuotas_amortizacion           516      516 OK
+transacciones                 740      740 OK
+
+== 6.1 Secuencias de identidad ==
+PASS  Secuencia alineada: sucursales                             (valor=5)
+PASS  Secuencia alineada: socios                                 (valor=55)
+PASS  Secuencia alineada: cuentas_ahorro                         (valor=66)
+PASS  Secuencia alineada: tipos_credito                          (valor=5)
+PASS  Secuencia alineada: solicitudes_credito                    (valor=50)
+PASS  Secuencia alineada: prestamos                              (valor=32)
+PASS  Secuencia alineada: cuotas_amortizacion                    (valor=516)
+PASS  Secuencia alineada: transacciones                          (valor=740)
+
+== 7. Integridad referencial ==
+PASS  Cantidad de claves foraneas en destino                     (valor=9)
+PASS  Sin huerfanos: cuentas_ahorro.socio_id -> socios.id        (valor=0)
+PASS  Sin huerfanos: solicitudes_credito.socio_id -> socios.id   (valor=0)
+PASS  Sin huerfanos: solicitudes_credito.tipo_credito_id -> tipos_credito.id (valor=0)
+PASS  Sin huerfanos: prestamos.solicitud_id -> solicitudes_credito.id (valor=0)
+PASS  Sin huerfanos: prestamos.socio_id -> socios.id             (valor=0)
+PASS  Sin huerfanos: cuotas_amortizacion.prestamo_id -> prestamos.id (valor=0)
+PASS  Sin huerfanos: transacciones.socio_id -> socios.id         (valor=0)
+PASS  Sin huerfanos: transacciones.cuenta_ahorro_id -> cuentas_ahorro.id (valor=0)
+PASS  Sin huerfanos: transacciones.prestamo_id -> prestamos.id   (valor=0)
+
+== 8. Rendimiento de consultas criticas ==
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on vw_cartera_mora  (cost=19.14..21.32 rows=97 width=112) (actual time=0.158..0.161 rows=6 loops=1)
+   Buffers: shared hit=9
+   ->  HashAggregate  (cost=19.14..20.35 rows=97 width=120) (actual time=0.158..0.160 rows=6 loops=1)
+         Group Key: s.id, p.id
+         Batches: 1  Memory Usage: 24kB
+         Buffers: shared hit=9
+         ->  Hash Join  (cost=4.71..17.68 rows=97 width=94) (actual time=0.076..0.136 rows=108 loops=1)
+               Hash Cond: (p.socio_id = s.id)
+               Buffers: shared hit=9
+               ->  Hash Right Join  (cost=1.47..14.17 rows=97 width=61) (actual time=0.027..0.077 rows=108 loops=1)
+                     Hash Cond: (c.prestamo_id = p.id)
+                     Buffers: shared hit=7
+                     ->  Seq Scan on cuotas_amortizacion c  (cost=0.00..11.16 rows=516 width=30) (actual time=0.004..0.027 rows=516 loops=1)
+                           Buffers: shared hit=6
+                     ->  Hash  (cost=1.40..1.40 rows=6 width=39) (actual time=0.009..0.010 rows=6 loops=1)
+                           Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                           Buffers: shared hit=1
+                           ->  Seq Scan on prestamos p  (cost=0.00..1.40 rows=6 width=39) (actual time=0.005..0.006 rows=6 loops=1)
+                                 Filter: ((estado)::text = 'moroso'::text)
+                                 Rows Removed by Filter: 26
+                                 Buffers: shared hit=1
+               ->  Hash  (cost=2.55..2.55 rows=55 width=41) (actual time=0.013..0.013 rows=55 loops=1)
+                     Buckets: 1024  Batches: 1  Memory Usage: 12kB
+                     Buffers: shared hit=2
+                     ->  Seq Scan on socios s  (cost=0.00..2.55 rows=55 width=41) (actual time=0.003..0.006 rows=55 loops=1)
+                           Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=404
+ Planning Time: 0.719 ms
+ Execution Time: 0.234 ms
+(30 rows)
+                                                              QUERY PLAN                                                              
+--------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=9.59..11.87 rows=55 width=149) (actual time=0.100..0.147 rows=55 loops=1)
+   Group Key: s.id
+   Buffers: shared hit=7
+   ->  Sort  (cost=9.59..9.75 rows=66 width=77) (actual time=0.093..0.096 rows=75 loops=1)
+         Sort Key: s.id, p.id
+         Sort Method: quicksort  Memory: 32kB
+         Buffers: shared hit=7
+         ->  Hash Left Join  (cost=4.96..7.59 rows=66 width=77) (actual time=0.044..0.064 rows=75 loops=1)
+               Hash Cond: (s.id = p.socio_id)
+               Buffers: shared hit=4
+               ->  Hash Right Join  (cost=3.24..5.08 rows=66 width=54) (actual time=0.027..0.040 rows=66 loops=1)
+                     Hash Cond: (ca.socio_id = s.id)
+                     Buffers: shared hit=3
+                     ->  Seq Scan on cuentas_ahorro ca  (cost=0.00..1.66 rows=66 width=25) (actual time=0.001..0.004 rows=66 loops=1)
+                           Buffers: shared hit=1
+                     ->  Hash  (cost=2.55..2.55 rows=55 width=37) (actual time=0.016..0.016 rows=55 loops=1)
+                           Buckets: 1024  Batches: 1  Memory Usage: 12kB
+                           Buffers: shared hit=2
+                           ->  Seq Scan on socios s  (cost=0.00..2.55 rows=55 width=37) (actual time=0.004..0.008 rows=55 loops=1)
+                                 Buffers: shared hit=2
+               ->  Hash  (cost=1.32..1.32 rows=32 width=31) (actual time=0.009..0.009 rows=32 loops=1)
+                     Buckets: 1024  Batches: 1  Memory Usage: 11kB
+                     Buffers: shared hit=1
+                     ->  Seq Scan on prestamos p  (cost=0.00..1.32 rows=32 width=31) (actual time=0.001..0.003 rows=32 loops=1)
+                           Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=383 dirtied=1
+ Planning Time: 0.751 ms
+ Execution Time: 0.202 ms
+(29 rows)
+
+Consulta                       MySQL wall(ms)  PG wall(ms)  PG server(ms)
+------------------------------ -------------- ------------ --------------
+vw_cartera_mora                           103          123          0.234
+vw_resumen_saldos_socio                   101          126          0.202
+
+Nota: wall(ms) incluye el overhead de 'docker compose exec' en ambos motores;
+      server(ms) es el 'Execution Time' de EXPLAIN ANALYZE en PostgreSQL.
+
+============================================================
+RESUMEN DE VERIFICACION
+PASS: 75
+FAIL: 0
+============================================================
+RESULTADO: TODAS LAS PRUEBAS PASARON

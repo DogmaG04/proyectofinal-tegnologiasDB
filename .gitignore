@@ -1,0 +1,12 @@
+# Secretos y artefactos generados
+.env
+backups/
+*.enc
+*.dump
+*.sql.gz
+
+# La documentación vive en su propia rama (docs)
+docs/
+
+# Plantilla UPDS original, sin modificar (no se versiona)
+plantilla-latex/

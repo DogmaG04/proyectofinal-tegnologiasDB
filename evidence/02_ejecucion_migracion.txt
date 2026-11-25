@@ -1,0 +1,375 @@
+============================================================
+EJECUCION DE LA MIGRACION Y RESPALDO CIFRADO
+Cooperativa de Ahorro y Credito Horizonte PyME S.R.L.
+Herramienta de carga: pgloader + SQL declarativo
+Generado: 2026-11-22 21:37:34 -04
+============================================================
+
+[2026-11-22 21:37:34] Esperando servicios ...
+[2026-11-22 21:37:34] Servicio db-origen healthy
+[2026-11-22 21:37:34] Servicio db-destino healthy
+== Herramientas ==
+pgloader version "3.6.10~devel"
+compiled with SBCL 2.5.2.debian
+psql (PostgreSQL) 16.16 (Debian 16.16-1.pgdg13+1)
+Zona horaria del destino: America/La_Paz
+
+== Conteos en el origen antes de migrar ==
+Tabla                       Filas
+------------------------ --------
+sucursales                      5
+socios                         55
+cuentas_ahorro                 66
+tipos_credito                   5
+solicitudes_credito            50
+prestamos                      32
+cuotas_amortizacion           516
+transacciones                 740
+
+== Congelamiento de escrituras en el origen ==
+pgloader lee cada tabla con un SELECT independiente: no ofrece un snapshot
+consistente entre tablas. La consistencia la garantiza el congelamiento de
+escrituras durante esta ventana y el respaldo previo con mysqldump.
+
+== Respaldo del origen (mysqldump + gzip) ==
+Archivo : /home/dogma/Proyectos/proyectofinal-tegnologiasDB/backups/origin_20261122_213734.sql.gz
+Tamano  : 32K
+SHA256  : 01170e64a5ca5cfa9dcfe7bc62c23e0a7dd508d65670b91c4cb0d80abdac900c
+
+== Preparacion del schema de staging ==
+SET
+DROP SCHEMA
+CREATE SCHEMA
+GRANT
+ALTER DEFAULT PRIVILEGES
+Schema stg listo (owner: migration_loader).
+
+== Renderizado de la plantilla pgloader ==
+Plantilla renderizada en /tmp/mysql_to_stage.load (modo 600).
+
+== Carga MySQL -> staging con pgloader ==
+2026-11-23T01:37:36.005000Z LOG pgloader version "3.6.10~devel"
+2026-11-23T01:37:36.006000Z LOG Data errors in '/tmp/pgloader-work/'
+2026-11-23T01:37:36.006000Z LOG Parsing commands from file #P"/tmp/mysql_to_stage.load"
+2026-11-23T01:37:36.099000Z LOG Migrating from #<MYSQL-CONNECTION mysql://app_legacy_user@db-origen:3306/coop_horizonte_legacy {1005D9FCC3}>
+2026-11-23T01:37:36.100000Z LOG Migrating into #<PGSQL-CONNECTION pgsql://migration_loader@db-destino:5432/coop_horizonte_core {1005D9FD43}>
+2026-11-23T01:37:36.618001Z LOG report summary reset
+             table name     errors       rows      bytes      total time
+-----------------------  ---------  ---------  ---------  --------------
+        fetch meta data          0          8                     0.022s
+         Create Schemas          0          0                     0.001s
+       Create SQL Types          0          0                     0.007s
+          Create tables          0          8                     0.027s
+         Set Table OIDs          0          8                     0.005s
+-----------------------  ---------  ---------  ---------  --------------
+     stg.cuentas_ahorro          0         66     4.0 kB          0.078s
+             stg.socios          0         55     9.0 kB          0.075s
+stg.solicitudes_credito          0         50     6.4 kB          0.133s
+         stg.sucursales          0          5     0.4 kB          0.135s
+      stg.tipos_credito          0          5     0.4 kB          0.193s
+stg.cuotas_amortizacion          0        516    29.0 kB          0.198s
+          stg.prestamos          0         32     2.1 kB          0.253s
+      stg.transacciones          0        740    60.6 kB          0.257s
+-----------------------  ---------  ---------  ---------  --------------
+COPY Threads Completion          0          2                     0.265s
+        Create Triggers          0          0                     0.000s
+       Install Comments          0          4                     0.000s
+-----------------------  ---------  ---------  ---------  --------------
+      Total import time          ✓       1469   111.9 kB          0.265s
+pgloader exit code: 0
+Archivos de rechazo: 0
+
+== Conteos origen vs staging ==
+Tabla                      Origen  Staging Estado
+------------------------ -------- -------- ------
+sucursales                      5        5 OK
+socios                         55       55 OK
+cuentas_ahorro                 66       66 OK
+tipos_credito                   5        5 OK
+solicitudes_credito            50       50 OK
+prestamos                      32       32 OK
+cuotas_amortizacion           516      516 OK
+transacciones                 740      740 OK
+
+== Precheck sobre staging ==
+SET
+SET
+CREATE FUNCTION
+DO
+DO
+DO
+DO
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+ assert_no_rows 
+----------------
+ 
+(1 row)
+
+PRECHECK OK: staging consistente con el esquema destino.
+
+== Carga transaccional staging -> public ==
+SET
+SET
+TRUNCATE TABLE
+INSERT 0 5
+INSERT 0 55
+INSERT 0 66
+INSERT 0 5
+INSERT 0 50
+INSERT 0 32
+INSERT 0 516
+INSERT 0 740
+SET
+SET
+DO
+DO
+POSTCHECK OK: public y stg son identicos.
+SET
+DO
+SECUENCIAS OK: todas alineadas con MAX(id).
+
+== Estadisticas del destino (ANALYZE) ==
+SET
+ANALYZE
+ANALYZE
+ANALYZE
+ANALYZE
+ANALYZE
+ANALYZE
+ANALYZE
+ANALYZE
+ANALYZE OK.
+
+== Limpieza del staging ==
+NOTICE:  drop cascades to 15 other objects
+DETAIL:  drop cascades to type stg.cuotas_amortizacion_estatus
+drop cascades to type stg.prestamos_estado
+drop cascades to type stg.socios_genero
+drop cascades to type stg.socios_estado
+drop cascades to type stg.solicitudes_credito_status
+drop cascades to type stg.tipos_credito_estado
+drop cascades to type stg.transacciones_tipo
+drop cascades to table stg.cuentas_ahorro
+drop cascades to table stg.cuotas_amortizacion
+drop cascades to table stg.prestamos
+drop cascades to table stg.socios
+drop cascades to table stg.solicitudes_credito
+drop cascades to table stg.sucursales
+drop cascades to table stg.tipos_credito
+drop cascades to table stg.transacciones
+DROP SCHEMA
+Schema stg eliminado.
+
+== Respaldo cifrado del destino (pg_dump -Fc + AES-256-CBC) ==
+Archivo : /home/dogma/Proyectos/proyectofinal-tegnologiasDB/backups/target_20261122_213734.dump.enc
+Tamano  : 72K
+SHA256  : 7d99366b48974682ddd263683e7c5ba4cd3bf7772efd634c165eb4a44d687edb
+Cifrado : AES-256-CBC + PBKDF2 (200000 iteraciones) + salt
+
+== Prueba de restauracion del respaldo cifrado ==
+Descifrado OK: 72K
+DROP DATABASE
+NOTICE:  database "coop_horizonte_restore" does not exist, skipping
+CREATE DATABASE
+Filas de socios restauradas: 55
+Restauracion: OK (coincide con el origen)
+
+== Comparativa de conteos origen vs destino ==
+Tabla                      Origen  Destino Estado
+------------------------ -------- -------- ------
+sucursales                      5        5 OK
+socios                         55       55 OK
+cuentas_ahorro                 66       66 OK
+tipos_credito                   5        5 OK
+solicitudes_credito            50       50 OK
+prestamos                      32       32 OK
+cuotas_amortizacion           516      516 OK
+transacciones                 740      740 OK
+
+============================================================
+RESULTADO: migracion pgloader + SQL y respaldo completados sin diferencias.
+============================================================

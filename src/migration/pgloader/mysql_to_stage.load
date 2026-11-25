@@ -1,0 +1,46 @@
+-- ============================================================================
+--  pgloader: MySQL 5.7 -> PostgreSQL 16 (schema de staging)
+--
+--  Objetivos:
+--    - Cargar SOLO las 8 tablas del dominio, sin vistas ni objetos auxiliares.
+--    - Crear las tablas directamente en el schema "stg": pgloader deriva el
+--      schema destino del nombre de la base MySQL, y ALTER SCHEMA lo renombra
+--      en memoria antes de emitir el DDL (no toca public).
+--    - No crear indices ni claves foraneas: el staging es desechable.
+--    - Abortar ante el primer error para no dejar una carga parcial silenciosa.
+--
+--  Las credenciales se inyectan con render_load.sh; este archivo NO se ejecuta
+--  tal cual.
+-- ============================================================================
+
+LOAD DATABASE
+     FROM      mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DB}?sslmode=disable
+     INTO postgresql://${MIGRATION_LOADER_USER}:${MIGRATION_LOADER_PASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=require
+
+ WITH include no drop,
+      create tables,
+      create no indexes,
+      no foreign keys,
+      reset no sequences,
+      on error stop,
+      workers = 2,
+      concurrency = 1
+
+ SET PostgreSQL PARAMETERS
+     timezone to 'America/La_Paz',
+     search_path to 'stg, public'
+
+ INCLUDING ONLY TABLE NAMES MATCHING
+     'sucursales',
+     'socios',
+     'cuentas_ahorro',
+     'tipos_credito',
+     'solicitudes_credito',
+     'prestamos',
+     'cuotas_amortizacion',
+     'transacciones'
+
+-- pgloader toma el nombre de la base MySQL como schema destino. Se renombra
+-- en memoria a "stg", que debe existir y pertenecer a migration_loader.
+ ALTER SCHEMA '${MYSQL_DB}' RENAME TO 'stg'
+;

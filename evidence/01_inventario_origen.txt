@@ -1,0 +1,130 @@
+============================================================
+INVENTARIO DEL SISTEMA ORIGEN - MySQL 5.7
+Cooperativa de Ahorro y Credito Horizonte PyME S.R.L.
+Generado: 2026-11-22 21:22:48 -04
+============================================================
+
+[2026-11-22 21:22:48] Esperando MySQL ...
+[2026-11-22 21:22:48] Servicio db-origen healthy
+== Version del motor ==
+mysql_version
+5.7.44
+
+== Tamano de la base de datos ==
+db	size_mb
+coop_horizonte_legacy	0.28
+
+== Tamano por tabla ==
+tabla	mb	filas_aprox
+solicitudes_credito	0.05	50
+socios	0.05	55
+prestamos	0.05	0
+cuentas_ahorro	0.05	66
+cuotas_amortizacion	0.03	0
+transacciones	0.03	0
+tipos_credito	0.02	5
+sucursales	0.02	5
+
+== Tablas ==
+tabla	motor	filas_aprox
+cuentas_ahorro	InnoDB	66
+cuotas_amortizacion	InnoDB	0
+prestamos	InnoDB	0
+socios	InnoDB	55
+solicitudes_credito	InnoDB	50
+sucursales	InnoDB	5
+tipos_credito	InnoDB	5
+transacciones	InnoDB	0
+
+== Vistas ==
+vista
+vw_cartera_mora
+vw_resumen_saldos_socio
+
+== Indices ==
+tabla	indice	no_unico	columna
+cuentas_ahorro	idx_cuenta_ahorro_socio	1	socio_id
+cuentas_ahorro	num_cuenta	0	num_cuenta
+cuentas_ahorro	PRIMARY	0	id
+cuotas_amortizacion	idx_cuota_prestamo	1	prestamo_id
+cuotas_amortizacion	PRIMARY	0	id
+prestamos	idx_prestado_estado	1	estado
+prestamos	PRIMARY	0	id
+prestamos	solicitud_id	0	solicitud_id
+socios	idx_socio_identificacion	1	numero_identificacion
+socios	numero_identificacion	0	numero_identificacion
+socios	PRIMARY	0	id
+solicitudes_credito	idx_socio_credito	1	socio_id
+solicitudes_credito	idx_socio_credito	1	tipo_credito_id
+solicitudes_credito	idx_solicitud_tipo	1	tipo_credito_id
+solicitudes_credito	PRIMARY	0	id
+sucursales	PRIMARY	0	id
+tipos_credito	PRIMARY	0	id
+transacciones	idx_transaccion_fecha	1	fecha_transaccion
+transacciones	PRIMARY	0	id
+
+== Usuarios ==
+user	host
+app_legacy_user	%
+
+== Privilegios de app_legacy_user ==
+Grants for app_legacy_user@%
+GRANT USAGE ON *.* TO 'app_legacy_user'@'%'
+GRANT ALL PRIVILEGES ON `coop_horizonte_legacy`.* TO 'app_legacy_user'@'%'
+
+== Conteos exactos por tabla ==
+Tabla                       Filas
+------------------------ --------
+sucursales                      5
+socios                         55
+cuentas_ahorro                 66
+tipos_credito                   5
+solicitudes_credito            50
+prestamos                      32
+cuotas_amortizacion           516
+transacciones                 740
+
+== Juego de caracteres y collation ==
+charset	collation
+utf8	utf8_general_ci
+
+== Columnas ENUM (incompatibilidad con PostgreSQL) ==
+tabla	columna	tipo
+cuotas_amortizacion	estatus	enum('pendiente','pagada','atrasada')
+prestamos	estado	enum('activo','pagado','moroso','cancelado')
+socios	genero	enum('M','F','O')
+socios	estado	enum('activo','inactivo','suspendido')
+solicitudes_credito	status	enum('pendiente','aprobada','rechazada','cancelada')
+tipos_credito	estado	enum('activo','inactivo','suspendido')
+transacciones	tipo	enum('deposito','retiro','pago_cuota','desembolso','transferencia')
+
+== Columnas DATETIME (sin zona horaria) ==
+tabla	columna	tipo
+cuentas_ahorro	fecha_apertura	datetime
+cuentas_ahorro	fecha_cierre	datetime
+cuotas_amortizacion	fecha_pago	datetime
+prestamos	fecha_desembolso	datetime
+socios	fecha_ultima_actualizacion	datetime
+solicitudes_credito	fecha_solicitud	datetime
+solicitudes_credito	fecha_aprobacion	datetime
+solicitudes_credito	fecha_desembolso	datetime
+sucursales	fecha_creacion	datetime
+transacciones	fecha_transaccion	datetime
+
+== Columnas TINYINT(1) (booleanos) ==
+tabla	columna	tipo
+cuentas_ahorro	estatus	tinyint(1)
+prestamos	pagado_total	tinyint(1)
+socios	estatus	tinyint(1)
+sucursales	estatus	tinyint(1)
+
+== Resumen de incompatibilidades ==
+tipo	columnas
+ENUM	7
+DATETIME	10
+TINYINT(1)	4
+FOREIGN KEY existentes	0
+
+============================================================
+FIN DEL INVENTARIO
+============================================================
