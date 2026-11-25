@@ -30,8 +30,9 @@ identidades \texttt{BIGINT GENERATED ALWAYS AS IDENTITY}, restricciones
 \texttt{CHECK}, 9 claves foráneas y 10 índices orientados a los reportes de
 cartera y saldos. El endurecimiento incluye TLS/SSL obligatorio con
 \texttt{hostssl}, autenticación \texttt{scram-sha-256}, revocación de
-privilegios de \texttt{PUBLIC}, tres roles granulares (\texttt{admin\_dba},
-\texttt{app\_core\_rw} y \texttt{auditor\_ro}), una vista enmascarada
+privilegios de \texttt{PUBLIC}, siete roles con mínimo privilegio
+(\texttt{admin\_dba}, \texttt{app\_core\_rw}, \texttt{auditor\_ro},
+\texttt{migration\_loader} y cuatro roles del equipo), una vista enmascarada
 \texttt{vw\_socios\_audit} y registro de conexiones, desconexiones y DDL.
 El respaldo del destino se genera con \texttt{pg\_dump -Fc} y se cifra con
 AES-256-CBC y PBKDF2; la restauración se probó y devolvió los 55 socios
@@ -245,7 +246,7 @@ relaciona cada componente con su propósito y su evidencia.
         \midrule
         \texttt{docker-compose.yml} & Orquestar origen, destino, migrador y documentación & Servicios \emph{healthy}; puertos en \texttt{127.0.0.1}. \\
         \texttt{src/origin/} & Esquema y datos legacy reproducibles & 8 tablas, 2 vistas, 1\,469 filas. \\
-        \texttt{src/target/} & Esquema destino, roles y configuración endurecida & 9 claves foráneas, 3 roles, SSL y \texttt{pg\_hba}. \\
+        \texttt{src/target/} & Esquema destino, roles y configuración endurecida & 9 claves foráneas, 7 roles, SSL y \texttt{pg\_hba}. \\
         \texttt{src/migration/} & pgloader + staging, precheck, postcheck y rollback transaccional & 1\,469 filas, 0 rechazos, 0 errores. \\
         \texttt{scripts/} & Auditoría, migración, respaldo y pruebas & 3 scripts y 3 evidencias reales. \\
         \texttt{docs/} & Informe, anexos y guion de demostración & PDF compilable y guion de 15--20 min. \\

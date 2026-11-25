@@ -33,7 +33,7 @@ cumplieron; los recomendados quedaron documentados como trabajo futuro.
         5 & 9 claves foráneas sin huérfanos. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
         6 & TLS obligatorio y conexiones sin SSL rechazadas. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
         7 & Autenticación \texttt{scram-sha-256}. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
-        8 & Tres roles de mínimo privilegio. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
+        8 & Siete roles de mínimo privilegio. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
         9 & \texttt{auditor\_ro} sin acceso a tablas sensibles. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
         10 & Enmascaramiento de CI/NIT y cuentas. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
         11 & Respaldo cifrado con AES-256-CBC. & Cumple & \texttt{backups/}. \\
@@ -69,7 +69,7 @@ mejoras para producción que no forman parte del alcance del laboratorio.
         2 & Autenticación \texttt{scram-sha-256}. & Cumple & \texttt{SHOW password\_encryption}. \\
         3 & \texttt{postgres} sin acceso remoto. & Cumple & Regla \texttt{local peer} únicamente. \\
         4 & Revocación de \texttt{PUBLIC}. & Cumple & \texttt{has\_schema\_privilege}. \\
-        5 & Roles de mínimo privilegio. & Cumple & 3 roles auditados. \\
+        5 & Roles de mínimo privilegio. & Cumple & 7 roles auditados. \\
         6 & \texttt{app\_core\_rw} sin DDL ni \texttt{TRUNCATE}. & Cumple & \texttt{has\_table\_privilege}. \\
         7 & \texttt{auditor\_ro} sin acceso a tablas sensibles. & Cumple & \texttt{permission denied}. \\
         8 & Enmascaramiento de CI/NIT y cuentas. & Cumple & \texttt{vw\_socios\_audit}. \\
