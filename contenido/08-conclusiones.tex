@@ -55,3 +55,30 @@ cooperativa ahora opera sobre PostgreSQL 16, un motor moderno y soportado, con
 seguridad por capas, integridad referencial, datos sensibles enmascarados,
 respaldo cifrado verificable y un proceso de migración reproducible y
 automatizado.
+
+\section{Recomendaciones}
+
+A partir de la ejecución y de las pruebas realizadas se recomienda, para una
+adopción en producción:
+
+\begin{enumerate}
+  \item \textbf{Gestión centralizada de secretos:} sustituir \texttt{.env} por un
+        gestor (Vault, AWS Secrets Manager o equivalente), con rotación
+        periódica de la frase de paso de los respaldos y separación entre la
+        custodia de la clave y la del archivo cifrado.
+  \item \textbf{Respaldo fuera del sitio:} aplicar la regla 3-2-1 y automatizar
+        la verificación SHA-256 y la prueba de restauración periódica, no solo
+        la generación del respaldo.
+  \item \textbf{Reducción de privilegios en el origen:} sustituir el
+        \texttt{GRANT ALL} de \texttt{app\_legacy\_user} por permisos mínimos de
+        lectura antes de cualquier nueva corrida sobre datos reales.
+  \item \textbf{Reproducibilidad de imágenes:} fijar las imágenes
+        \texttt{mysql:5.7} y \texttt{postgres:16} por digest para evitar cambios
+        silenciosos entre despliegues.
+  \item \textbf{Monitoreo y capacidad:} instrumentar conexiones, consultas
+        lentas y crecimiento de los datos; evaluar PgBouncer y, cuando el
+        volumen lo justifique, replicación con CDC para reducir la ventana de
+        corte.
+  \item \textbf{Operación formal:} documentar un \emph{runbook} de reversión y
+        ejecutar ensayos periódicos de recuperación con RTO y RPO medidos.
+\end{enumerate}
