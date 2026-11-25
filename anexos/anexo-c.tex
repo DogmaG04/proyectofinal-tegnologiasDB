@@ -48,6 +48,54 @@ cumplieron; los recomendados quedaron documentados como trabajo futuro.
   }{Elaboración propia con base en la ejecución real del proyecto.}
 \end{table}
 
+\subsection{Lista de cotejo de seguridad}
+
+La Tabla~\ref{tab:checklist} presenta la lista de cotejo aplicada. Cada
+control tiene un estado y una evidencia. Los controles marcados como
+``Cumple'' se verificaron en el entorno; los marcados como ``Recomendado'' son
+mejoras para producción que no forman parte del alcance del laboratorio.
+
+\begin{table}[H]
+  \centering
+  \caption{Lista de cotejo de seguridad}
+  \label{tab:checklist}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}C{0.7cm}L{6.0cm}L{2.2cm}L{5.0cm}@{}}
+        \toprule
+        \textbf{\#} & \textbf{Control} & \textbf{Estado} & \textbf{Evidencia} \\
+        \midrule
+        1 & TLS obligatorio para conexiones TCP. & Cumple & \texttt{hostssl}; sin SSL rechazado. \\
+        2 & Autenticación \texttt{scram-sha-256}. & Cumple & \texttt{SHOW password\_encryption}. \\
+        3 & \texttt{postgres} sin acceso remoto. & Cumple & Regla \texttt{local peer} únicamente. \\
+        4 & Revocación de \texttt{PUBLIC}. & Cumple & \texttt{has\_schema\_privilege}. \\
+        5 & Roles de mínimo privilegio. & Cumple & 3 roles auditados. \\
+        6 & \texttt{app\_core\_rw} sin DDL ni \texttt{TRUNCATE}. & Cumple & \texttt{has\_table\_privilege}. \\
+        7 & \texttt{auditor\_ro} sin acceso a tablas sensibles. & Cumple & \texttt{permission denied}. \\
+        8 & Enmascaramiento de CI/NIT y cuentas. & Cumple & \texttt{vw\_socios\_audit}. \\
+        9 & Registro de conexiones y desconexiones. & Cumple & \texttt{log\_connections}. \\
+        10 & Registro de DDL. & Cumple & \texttt{log\_statement = 'ddl'}. \\
+        11 & Respaldo cifrado AES-256-CBC. & Cumple & \texttt{target\_*.dump.enc}. \\
+        12 & Verificación SHA-256 de respaldos. & Cumple & \texttt{sha256sum}. \\
+        13 & Restauración probada. & Cumple & 55 socios restaurados. \\
+        14 & Clave privada TLS con permisos \texttt{600}. & Cumple & \texttt{ls -l}. \\
+        15 & Puertos en \texttt{127.0.0.1}. & Cumple & \texttt{docker compose ps}. \\
+        16 & \texttt{.env} fuera de git. & Cumple & \texttt{.gitignore}. \\
+        17 & Integridad referencial declarada. & Cumple & 9 FK. \\
+        18 & Conteos origen--destino verificados. & Cumple & 8 tablas OK. \\
+        19 & Consultas críticas con plan medido. & Cumple & \texttt{EXPLAIN ANALYZE}. \\
+        20 & Imágenes fijadas por versión. & Parcial & \texttt{mysql:5.7}, \texttt{postgres:16}. \\
+        21 & Gestor de secretos en producción. & Recomendado & No aplica al laboratorio. \\
+        22 & Rotación de logs y retención. & Recomendado & Política propuesta. \\
+        23 & Copia de respaldo fuera del sitio. & Recomendado & Regla 3-2-1. \\
+        24 & Monitoreo y alertas. & Recomendado & PgBouncer, consultas lentas. \\
+        25 & Pruebas de carga y \emph{failover}. & Recomendado & Fase futura. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con base en \citet{cis2024postgres}, \citet{owasp2023asvs} y \citet{nist80053}.}
+\end{table}
+
 \subsection{Evidencia 1: inventario del origen}
 
 \capturaAPA{fig:anexo-inventario-1}{Inventario del origen: versión, tablas y conteos}%
