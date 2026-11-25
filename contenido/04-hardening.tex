@@ -1,0 +1,426 @@
+% ============================================================================
+%  CAPÍTULO II (continuación): HARDENING DEL DESTINO
+% ============================================================================
+
+\section{Hardening del SGBD de destino}
+
+El endurecimiento de PostgreSQL 16 se diseñó con un principio rector:
+\emph{negar por defecto, conceder por excepción}. Cada capa ---transporte,
+autenticación, autorización, datos y auditoría--- tiene una configuración
+explícita y una prueba que la verifica. No se asumió que una medida estaba
+aplicada porque el archivo de configuración la mencionara: se consultó el
+estado efectivo del servidor y se registró la salida en
+\texttt{evidence/03\_pruebas\_y\_hardening.txt}. La Tabla~\ref{tab:capas-hardening}
+resume las capas y su propósito.
+
+\begin{table}[H]
+  \centering
+  \caption{Capas de seguridad aplicadas en PostgreSQL 16}
+  \label{tab:capas-hardening}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{2.7cm}L{5.2cm}L{6.4cm}@{}}
+        \toprule
+        \textbf{Capa} & \textbf{Medida} & \textbf{Propósito} \\
+        \midrule
+        Transporte & TLS 1.2 o superior, cifrados \texttt{HIGH}, \texttt{hostssl} obligatorio. & Impedir que credenciales y datos viajen en texto claro. \\
+        Autenticación & \texttt{scram-sha-256} para todos los roles de aplicación. & Evitar el envío de contraseñas en claro y el uso de hashes débiles. \\
+        Autorización & Revocación de \texttt{PUBLIC}; roles \texttt{admin\_dba}, \texttt{app\_core\_rw} y \texttt{auditor\_ro}. & Aplicar mínimo privilegio y separación de funciones. \\
+        Datos & Vista \texttt{vw\_socios\_audit} con enmascaramiento de CI/NIT, teléfono, correo y cuenta. & Permitir auditoría sin exponer identificadores completos. \\
+        Auditoría & \texttt{log\_connections}, \texttt{log\_disconnections}, \texttt{log\_statement = 'ddl'}. & Reconstruir accesos y cambios de estructura. \\
+        Respaldo & \texttt{pg\_dump -Fc} + AES-256-CBC + PBKDF2. & Proteger la confidencialidad de las copias. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con base en \citet{cis2024postgres}, \citet{owasp2023asvs} y \citet{nist80053}.}
+\end{table}
+
+\subsection{TLS/SSL obligatorio}
+
+El servidor destino se configuró con \texttt{ssl = on}, protocolo mínimo
+TLS 1.2 y cifrados \texttt{HIGH:!aNULL:!MD5}. La clave privada
+\texttt{server.key} tiene permisos \texttt{600} y pertenece al usuario
+\texttt{postgres}; el certificado \texttt{server.crt} tiene permisos
+\texttt{644}. El certificado es autofirmado y contiene el nombre
+\texttt{db-destino} en el campo \texttt{Subject Alternative Name}, además de
+\texttt{localhost} y \texttt{127.0.0.1}. Es válido desde el 20 de noviembre de
+2026 hasta el 22 de febrero de 2029. La Tabla~\ref{tab:certificado} resume sus
+atributos.
+
+\begin{table}[H]
+  \centering
+  \caption{Atributos del certificado TLS del destino}
+  \label{tab:certificado}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{4.2cm}L{9.8cm}@{}}
+        \toprule
+        \textbf{Atributo} & \textbf{Valor} \\
+        \midrule
+        Sujeto & \texttt{C=BO, ST=La Paz, L=La Paz, O=Cooperativa Horizonte PyME S.R.L., OU=TI, CN=db-destino}. \\
+        SAN & \texttt{DNS:db-destino}, \texttt{DNS:localhost}, \texttt{IP:127.0.0.1}. \\
+        Validez & 20/11/2026 -- 22/02/2029. \\
+        Uso de clave & \texttt{digitalSignature}, \texttt{keyEncipherment}, \texttt{keyCertSign}. \\
+        Propósito extendido & \texttt{serverAuth}. \\
+        Restricción básica & \texttt{CA:TRUE} (certificado autofirmado de laboratorio). \\
+        Permisos & \texttt{server.key}: \texttt{600}; \texttt{server.crt}: \texttt{644}. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{openssl x509} y \texttt{src/target/ssl/}.}
+\end{table}
+
+El fragmento relevante de \texttt{src/target/postgresql.conf} es el siguiente.
+La configuración se monta en el contenedor y se aplica al iniciar; no se
+edita el archivo dentro del volumen de datos, de modo que la configuración
+queda versionada junto con el código.
+
+\begin{lstlisting}[language=bash,caption={Configuración TLS y de auditoría en \texttt{postgresql.conf}},label={lst:postgresql-conf}]
+ssl = on
+ssl_cert_file = '/var/lib/postgresql/ssl/server.crt'
+ssl_key_file = '/var/lib/postgresql/ssl/server.key'
+ssl_min_protocol_version = 'TLSv1.2'
+ssl_ciphers = 'HIGH:!aNULL:!MD5'
+ssl_prefer_server_ciphers = on
+
+password_encryption = 'scram-sha-256'
+
+log_connections = on
+log_disconnections = on
+log_statement = 'ddl'
+log_line_prefix = '%m [%p] %q%u@%d '
+
+timezone = 'America/La_Paz'
+log_timezone = 'America/La_Paz'
+\end{lstlisting}
+
+La prueba de conexión se realizó desde el contenedor migrador con
+\texttt{sslmode=require} y \texttt{sslmode=verify-ca}. En el segundo caso se
+pasó \texttt{sslrootcert=/etc/postgresql/ssl/server.crt} para validar la
+cadena. Ambas conexiones funcionaron. La conexión con \texttt{sslmode=disable}
+fue rechazada con el mensaje \texttt{no pg\_hba.conf entry ... no encryption},
+lo que demuestra que la política no es una recomendación: es una condición
+de acceso.
+
+\capturaAPA{fig:cap-ssl}{Verificación TLS: conexión rechazada sin SSL y aceptada con \texttt{verify-ca}}%
+  {captura-ssl-verificacion.png}%
+  {Conexión con \texttt{sslmode=disable} rechazada por \texttt{pg\_hba.conf} y conexión con \texttt{sslmode=verify-ca} aceptada.}
+
+\subsection{Autenticación \texttt{scram-sha-256} y reglas \texttt{pg\_hba.conf}}
+
+PostgreSQL 16 usa \texttt{scram-sha-256} como método de autenticación por
+defecto para contraseñas nuevas. SCRAM es un mecanismo de desafío-respuesta
+que no transmite la contraseña en claro y resiste ataques de repetición
+\citep{rfc5802,rfc7677}. El archivo \texttt{pg\_hba.conf} se diseñó para que
+solo las conexiones TCP cifradas puedan autenticarse, y para que
+\texttt{postgres} no tenga acceso remoto. La Tabla~\ref{tab:pg-hba} reproduce
+las reglas efectivas.
+
+\begin{table}[H]
+  \centering
+  \caption{Reglas efectivas de \texttt{pg\_hba.conf}}
+  \label{tab:pg-hba}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{1.5cm}L{3.4cm}L{3.0cm}L{3.2cm}L{3.3cm}@{}}
+        \toprule
+        \textbf{Tipo} & \textbf{Base} & \textbf{Usuario} & \textbf{Dirección} & \textbf{Método} \\
+        \midrule
+        \texttt{local} & todas & todos & socket local & \texttt{peer} \\
+        \texttt{local} & todas & \texttt{postgres} & socket local & \texttt{peer} \\
+        \texttt{hostssl} & \texttt{coop\_horizonte\_core} & \texttt{admin\_dba} & \texttt{0.0.0.0/0}, \texttt{::/0} & \texttt{scram-sha-256} \\
+        \texttt{hostssl} & \texttt{coop\_horizonte\_core} & \texttt{app\_core\_rw} & \texttt{0.0.0.0/0}, \texttt{::/0} & \texttt{scram-sha-256} \\
+        \texttt{hostssl} & \texttt{coop\_horizonte\_core} & \texttt{auditor\_ro} & \texttt{0.0.0.0/0}, \texttt{::/0} & \texttt{scram-sha-256} \\
+        \texttt{hostssl} & \texttt{coop\_horizonte\_core} & \texttt{migration\_loader} & \texttt{0.0.0.0/0}, \texttt{::/0} & \texttt{scram-sha-256} \\
+        \texttt{hostssl} & \texttt{coop\_horizonte\_core} & \texttt{nicolas}, \texttt{joaquin}, \texttt{david}, \texttt{gustavo} & \texttt{0.0.0.0/0}, \texttt{::/0} & \texttt{scram-sha-256} \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/03\_pruebas\_y\_hardening.txt}.}
+\end{table}
+
+La ausencia de una regla \texttt{host} para \texttt{postgres} es deliberada.
+El superusuario solo puede conectarse por socket local con autenticación
+\texttt{peer}, lo que exige que el usuario del sistema operativo coincida con
+el usuario de la base. En el contenedor, los scripts administrativos se
+ejecutan con \texttt{docker compose exec -u postgres}, de modo que no se
+necesita exponer \texttt{postgres} por TCP. Si un atacante obtuviera la
+contraseña de \texttt{postgres}, no podría usarla remotamente.
+
+\subsection{Revocación de \texttt{PUBLIC} y roles de mínimo privilegio}
+
+Por defecto, PostgreSQL permite que \texttt{PUBLIC} tenga \texttt{USAGE} y
+\texttt{CREATE} sobre el esquema \texttt{public}, y \texttt{CONNECT} sobre
+cualquier base. Eso es incompatible con un entorno financiero. El script
+\texttt{src/target/02\_hardening\_roles.sql} revoca esos privilegios y crea
+siete roles con responsabilidades separadas: tres roles de operación
+(\texttt{admin\_dba}, \texttt{app\_core\_rw}, \texttt{auditor\_ro}), un rol de
+carga de datos (\texttt{migration\_loader}) y cuatro roles de administradores
+del equipo (\texttt{nicolas}, \texttt{joaquin}, \texttt{david},
+\texttt{gustavo}). La Tabla~\ref{tab:roles} presenta la matriz de privilegios.
+
+\begin{table}[H]
+  \centering
+  \caption{Roles y privilegios en PostgreSQL 16}
+  \label{tab:roles}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{2.5cm}L{2.3cm}L{4.0cm}L{5.6cm}@{}}
+        \toprule
+        \textbf{Rol} & \textbf{Atributos} & \textbf{Permite} & \textbf{Prohíbe} \\
+        \midrule
+        \texttt{admin\_dba} & \texttt{LOGIN}, \texttt{NOSUPERUSER}, \texttt{CREATEDB}, \texttt{CREATEROLE}, \texttt{NOINHERIT} & Administrar la base, crear objetos, ejecutar DDL y DML, gestionar roles. & Ser superusuario; eludir la auditoría del sistema. \\
+        \texttt{app\_core\_rw} & \texttt{LOGIN}, \texttt{NOSUPERUSER}, \texttt{NOCREATEDB}, \texttt{NOCREATEROLE}, \texttt{NOINHERIT} & \texttt{SELECT}, \texttt{INSERT}, \texttt{UPDATE}, \texttt{DELETE}; usar secuencias. & DDL, \texttt{TRUNCATE}, cambios de roles, acceso a funciones administrativas. \\
+        \texttt{auditor\_ro} & \texttt{LOGIN}, \texttt{NOSUPERUSER}, \texttt{NOCREATEDB}, \texttt{NOCREATEROLE}, \texttt{NOINHERIT} & \texttt{SELECT} sobre tablas no sensibles y sobre \texttt{vw\_socios\_audit}. & Leer \texttt{socios}, \texttt{cuentas\_ahorro} o \texttt{vw\_cartera\_mora}; modificar datos. \\
+        \texttt{migration\_loader} & \texttt{LOGIN}, \texttt{NOSUPERUSER}, \texttt{NOCREATEDB}, \texttt{NOCREATEROLE}, \texttt{NOINHERIT}, \texttt{search\_path='stg'} & Cargar datos en schema \texttt{stg}; leer staging. & Acceso a \texttt{public}; modificar objetos de producción. \\
+        \texttt{nicolas}, \texttt{joaquin}, \texttt{david}, \texttt{gustavo} & \texttt{LOGIN}, \texttt{NOSUPERUSER}, \texttt{NOCREATEDB}, \texttt{NOCREATEROLE}, \texttt{NOINHERIT} & \texttt{CONNECT}, \texttt{USAGE} en \texttt{public}; \texttt{ALL} sobre tablas, secuencias y funciones de \texttt{public}. & Ser superusuario; eludir \texttt{pg\_hba}. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/03\_pruebas\_y\_hardening.txt}.}
+\end{table}
+
+\capturaAPA{fig:cap-roles}{Privilegios efectivos de los tres roles del destino}%
+  {captura-roles-privilegios.png}%
+  {Salida de \texttt{has\_schema\_privilege} y \texttt{has\_table\_privilege} para \texttt{admin\_dba}, \texttt{app\_core\_rw} y \texttt{auditor\_ro}.}
+
+El rol \texttt{admin\_dba} no es superusuario. Puede crear bases y roles,
+pero no puede leer archivos del sistema, ejecutar comandos del sistema
+operativo ni eludir las reglas de \texttt{pg\_hba}. Esa distinción es
+importante: en muchos equipos se usa el superusuario para todo, lo que
+convierte cualquier error en un incidente grave. El rol
+\texttt{app\_core\_rw} no puede ejecutar \texttt{TRUNCATE} ni DDL, de modo
+que una inyección SQL en la aplicación no puede borrar tablas ni alterar el
+esquema. El rol \texttt{auditor\_ro} no puede leer las tablas base con datos
+personales; solo accede a la vista enmascarada y a las vistas agregadas que no
+exponen identificadores completos.
+
+\begin{lstlisting}[language=SQL,caption={Extracto de revocación y creación de roles},label={lst:roles}]
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+REVOKE CONNECT ON DATABASE coop_horizonte_core FROM PUBLIC;
+
+CREATE ROLE admin_dba WITH LOGIN NOSUPERUSER CREATEDB CREATEROLE NOINHERIT
+  PASSWORD '...';
+CREATE ROLE app_core_rw WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+  NOINHERIT PASSWORD '...';
+CREATE ROLE auditor_ro WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+  NOINHERIT PASSWORD '...';
+CREATE ROLE migration_loader WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+  NOINHERIT PASSWORD '...';
+
+DO $$
+DECLARE
+  admin_names text[] := ARRAY['nicolas', 'joaquin', 'david', 'gustavo'];
+  admin_name text;
+BEGIN
+  FOREACH admin_name IN ARRAY admin_names LOOP
+    EXECUTE format('CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD %L', admin_name, 'sudoers123');
+    EXECUTE format('GRANT CONNECT ON DATABASE coop_horizonte_core TO %I', admin_name);
+    EXECUTE format('GRANT USAGE ON SCHEMA public TO %I', admin_name);
+    EXECUTE format('GRANT ALL ON ALL TABLES IN SCHEMA public TO %I', admin_name);
+    EXECUTE format('GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO %I', admin_name);
+    EXECUTE format('GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO %I', admin_name);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO %I', admin_name);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO %I', admin_name);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO %I', admin_name);
+  END LOOP;
+END $$;
+
+GRANT CONNECT ON DATABASE coop_horizonte_core TO admin_dba, app_core_rw, auditor_ro, migration_loader;
+GRANT USAGE ON SCHEMA public TO admin_dba, app_core_rw, auditor_ro, migration_loader;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_core_rw;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_core_rw;
+
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO auditor_ro;
+REVOKE SELECT ON socios FROM auditor_ro;
+REVOKE SELECT ON cuentas_ahorro FROM auditor_ro;
+REVOKE SELECT ON vw_cartera_mora FROM auditor_ro;
+GRANT SELECT ON vw_socios_audit TO auditor_ro;
+GRANT SELECT ON vw_resumen_saldos_socio TO auditor_ro;
+\end{lstlisting}
+
+\subsection{Auditoría y registro de eventos}
+
+El servidor registra conexiones, desconexiones y sentencias DDL. Cada línea
+de registro incluye la marca de tiempo, el identificador del proceso, el
+usuario y la base de datos, lo que permite correlacionar un evento con una
+sesión. Esta
+configuración no sustituye a una auditoría completa de DML: para eso se
+recomienda \texttt{pgaudit} o una solución de auditoría a nivel de aplicación.
+Sin embargo, cubre los eventos más relevantes para el proyecto: quién se
+conectó, cuándo y qué cambios de estructura se ejecutaron.
+
+El registro tiene un costo: escribe en disco y puede crecer. En producción se
+recomienda rotar los archivos, enviarlos a un recolector central y definir una
+retención mínima. La configuración del laboratorio prioriza la evidencia y la
+trazabilidad; la operación real debe equilibrar detalle y volumen.
+
+\subsection{Enmascaramiento de datos sensibles}
+
+La vista \texttt{vw\_socios\_audit} permite que el rol \texttt{auditor\_ro}
+consulte información de socios sin ver documentos, teléfonos, correos ni
+números de cuenta completos. El enmascaramiento se implementa con
+\texttt{CASE} y funciones de cadena: se conserva el sufijo para que el
+auditor pueda correlacionar registros, pero se ocultan los dígitos
+significativos. La Tabla~\ref{tab:enmascaramiento} muestra las reglas.
+
+\begin{table}[H]
+  \centering
+  \caption{Reglas de enmascaramiento en \texttt{vw\_socios\_audit}}
+  \label{tab:enmascaramiento}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{3.2cm}L{4.2cm}L{7.2cm}@{}}
+        \toprule
+        \textbf{Campo} & \textbf{Expresión} & \textbf{Ejemplo de salida} \\
+        \midrule
+        CI/NIT & \texttt{'****' || right(numero\_identificacion, 4)} & \texttt{****6-OR} \\
+        Teléfono & \texttt{'****' || right(telefono, 4)} & \texttt{****4877} \\
+        Correo & \texttt{'****@' || split\_part(email, '@', 2)} & \texttt{****@horizonte.pymes} \\
+        Número de cuenta & \texttt{'****' || right(num\_cuenta, 4)} & \texttt{****9292} \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/03\_pruebas\_y\_hardening.txt}.}
+\end{table}
+
+\capturaAPA{fig:cap-vista}{Vista enmascarada y acceso denegado a la tabla base}%
+  {captura-vista-enmascarada.png}%
+  {Consulta a \texttt{vw\_socios\_audit} con valores enmascarados y error \texttt{permission denied} al leer \texttt{socios}.}
+
+La vista agrupa las cuentas por socio con \texttt{string\_agg}, de modo que un
+socio con dos cuentas aparece en una sola fila con ambos números enmascarados.
+El rol \texttt{auditor\_ro} no tiene \texttt{SELECT} sobre \texttt{socios} ni
+sobre \texttt{cuentas\_ahorro}; si intenta consultarlas directamente, recibe
+\texttt{permission denied}. Esa separación es la que hace que el
+enmascaramiento sea efectivo: no basta con ocultar columnas en una vista si el
+usuario puede leer la tabla original.
+
+\subsection{Justificación normativa}
+
+Las medidas se alinean con marcos reconocidos. El \emph{CIS PostgreSQL
+Benchmark} recomienda exigir TLS, usar autenticación fuerte, revocar
+privilegios de \texttt{PUBLIC}, separar roles y habilitar registros de
+conexión \citep{cis2024postgres}. El \emph{OWASP Application Security
+Verification Standard} exige control de acceso, cifrado en tránsito y
+protección de datos sensibles \citep{owasp2023asvs}. El \emph{NIST SP 800-53}
+establece controles de acceso, auditoría y protección de la información
+\citep{nist80053}, y el \emph{NIST SP 800-63B} recomienda autenticadores
+resistentes a la interceptación \citep{nist80063b}. El proyecto no certifica
+cumplimiento, pero adopta estas prácticas como referencia de diseño.
+
+\section{Evidencias de verificación del hardening}
+\label{sec:evidencias-hardening}
+
+El script \texttt{scripts/03\_verify\_all.sh} ejecuta 75 comprobaciones y
+genera \texttt{evidence/03\_pruebas\_y\_hardening.txt}. El resultado fue
+75 \texttt{PASS} y 0 \texttt{FAIL}. La Tabla~\ref{tab:pruebas-hardening}
+agrupa las comprobaciones por categoría y resume el resultado. Todas las
+consultas se ejecutaron contra el servidor real, no contra una maqueta.
+
+\begin{table}[H]
+  \centering
+  \caption{Resumen de las pruebas de hardening}
+  \label{tab:pruebas-hardening}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{4.6cm}C{1.8cm}C{1.8cm}L{6.4cm}@{}}
+        \toprule
+        \textbf{Categoría} & \textbf{PASS} & \textbf{FAIL} & \textbf{Evidencia principal} \\
+        \midrule
+        Parámetros de seguridad & 5 & 0 & \texttt{ssl=on}, \texttt{scram-sha-256}, logs activos. \\
+        Reglas \texttt{pg\_hba} & 4 & 0 & Sin SSL rechazado; SSL y \texttt{verify-ca} aceptados; \texttt{postgres} remoto rechazado. \\
+        Roles y privilegios & 27 & 0 & 7 roles auditados; 16 checks de los 4 usuarios admin. \\
+        Enmascaramiento & 3 & 0 & Valores con \texttt{****}; sin identificadores completos. \\
+        Conteos origen--destino & 8 & 0 & 8 tablas con conteos idénticos. \\
+        Integridad referencial & 10 & 0 & 9 claves foráneas; 0 huérfanos. \\
+        Staging, loader y secuencias & 18 & 0 & Schema \texttt{stg}; pgloader; \texttt{setval}; \texttt{ANALYZE}. \\
+        \midrule
+        \textbf{Total} & \textbf{75} & \textbf{0} & Todas las pruebas pasaron. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/03\_pruebas\_y\_hardening.txt}.}
+\end{table}
+
+El siguiente fragmento reproduce las salidas más relevantes. Se conserva el
+texto original para que el lector pueda contrastarlo con el archivo de
+evidencia.
+
+\begin{lstlisting}[style=terminal,caption={Evidencias reales de hardening (extracto)},label={lst:evidencia-hardening}]
+== 3. Rechazo de conexiones sin SSL ==
+PASS  Conexion TCP sin SSL rechazada
+PASS  Conexion TCP con SSL (sslmode=require)
+PASS  Conexion TCP con SSL verificado (sslmode=verify-ca)
+PASS  Acceso remoto directo de postgres rechazado
+
+== 4. Roles y privilegios de minimo privilegio ==
+PASS  admin_dba no es superusuario                               (valor=f)
+PASS  app_core_rw no es superusuario                             (valor=f)
+PASS  app_core_rw puede iniciar sesion                           (valor=t)
+PASS  auditor_ro puede iniciar sesion                            (valor=t)
+PASS  PUBLIC sin CREATE en schema public                         (valor=f)
+PASS  auditor_ro con USAGE en public                             (valor=t)
+PASS  app_core_rw sin CREATE en public                           (valor=f)
+PASS  auditor_ro no lee socios                                   (valor=f)
+PASS  auditor_ro lee vw_socios_audit                             (valor=t)
+PASS  app_core_rw inserta en socios                              (valor=t)
+PASS  app_core_rw no trunca socios                               (valor=f)
+
+== 5. Enmascaramiento de datos sensibles ==
+****6-OR|****4877, ****9292
+****4-OR|****7514
+****3-LP|****4895, ****1669
+PASS  vw_socios_audit devuelve valores enmascarados
+PASS  No se detectaron identificadores completos en la vista
+PASS  auditor_ro no puede leer la tabla socios
+
+== 6. Roles de administradores del equipo ==
+PASS  nicolas puede iniciar sesion                                 (valor=t)
+PASS  joaquin puede iniciar sesion                                 (valor=t)
+PASS  david puede iniciar sesion                                   (valor=t)
+PASS  gustavo puede iniciar sesion                                 (valor=t)
+PASS  nicolas no es superusuario                                   (valor=f)
+PASS  joaquin no es superusuario                                   (valor=f)
+PASS  david no es superusuario                                     (valor=f)
+PASS  gustavo no es superusuario                                   (valor=f)
+PASS  nicolas tiene privilegio de admin en public                  (valor=t)
+PASS  joaquin tiene privilegio de admin en public                  (valor=t)
+PASS  david tiene privilegio de admin en public                    (valor=t)
+PASS  gustavo tiene privilegio de admin en public                  (valor=t)
+PASS  conexion TLS real para nicolas                               (valor=t)
+PASS  conexion TLS real para joaquin                               (valor=t)
+PASS  conexion TLS real para david                                 (valor=t)
+PASS  conexion TLS real para gustavo                               (valor=t)
+
+== 7. Staging, loader y secuencias ==
+PASS  schema stg existe                                            (valor=t)
+PASS  migration_loader tiene USAGE en stg                          (valor=t)
+PASS  migration_loader sin acceso a public                         (valor=f)
+PASS  pgloader cargo tablas sin rechazos                           (valor=t)
+PASS  conteos origen vs stg coinciden                              (valor=t)
+PASS  precheck valida nulos, ENUM, huérfanos, rangos               (valor=t)
+PASS  postcheck EXCEPT ALL bidireccional OK                        (valor=t)
+PASS  secuencias reajustadas con setval                            (valor=t)
+PASS  ANALYZE ejecutado como postgres                              (valor=t)
+PASS  staging eliminado despues de la carga                        (valor=t)
+PASS  rollback transaccional confirmado                            (valor=t)
+
+== 8. Resumen final ==
+PASS: 75
+FAIL: 0
+\end{lstlisting}
+
+La interpretación es directa. Si \texttt{ssl} estuviera en \texttt{off}, la
+primera prueba fallaría. Si \texttt{app\_core\_rw} pudiera truncar
+\texttt{socios}, la prueba de privilegios fallaría. Si la vista devolviera un
+documento completo, la expresión regular detectaría siete o más dígitos
+consecutivos y la prueba de enmascaramiento fallaría. El script no se limita
+a imprimir valores: compara con el valor esperado y cuenta los fallos. Esa
+es la diferencia entre una demostración y una verificación. La salida completa
+de las 75 pruebas se presenta en el Anexo~C
+(Figuras~\ref{fig:anexo-pruebas-1} a~\ref{fig:anexo-pruebas-3}).

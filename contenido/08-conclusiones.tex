@@ -1,0 +1,57 @@
+% ============================================================================
+%  CONCLUSIONES
+% ============================================================================
+
+\section{Conclusiones}
+
+El proyecto de migración heterogénea de la base de datos de la Cooperativa de
+Ahorro y Crédito Horizonte PyME S.R.L. desde MySQL 5.7 hacia PostgreSQL 16 se
+ha ejecutado de forma íntegra, segura y verificable, cumpliendo con los ocho
+objetivos específicos definidos en el Capítulo~II.
+
+\begin{enumerate}
+  \item \textbf{Diagnóstico del sistema de origen:} se levantó un inventario
+        completo del motor MySQL 5.7.44: 8 tablas, 2 vistas, 19 entradas de
+        índice, 0.28 MB de tamaño, un único usuario de aplicación
+        (\texttt{app\_legacy\_user} con \texttt{GRANT ALL}), ausencia de claves
+        foráneas y tráfico sin cifrado.
+  \item \textbf{Incompatibilidades de tipos y semántica:} se documentó la matriz
+        de conversión (\texttt{TINYINT(1)} $\rightarrow$ \texttt{BOOLEAN},
+        \texttt{ENUM} $\rightarrow$ \texttt{VARCHAR} + \texttt{CHECK},
+        \texttt{DATETIME} $\rightarrow$ \texttt{TIMESTAMPTZ} en
+        \texttt{America/La\_Paz}, \texttt{INT UNSIGNED AUTO\_INCREMENT}
+        $\rightarrow$ \texttt{BIGINT GENERATED ALWAYS AS IDENTITY}).
+  \item \textbf{Diseño del esquema destino:} se implementaron tipos nativos de
+        PostgreSQL 16, restricciones \texttt{CHECK}, 9 claves foráneas, 10
+        índices y 3 vistas (incluyendo la vista enmascarada
+        \texttt{vw\_socios\_audit}).
+  \item \textbf{ETL determinista:} se reemplazó el ETL artesanal en Python por
+        una arquitectura basada en \textbf{pgloader} con schema de staging
+        (\texttt{stg}), precheck de validación, carga en una sola transacción con
+        \texttt{OVERRIDING SYSTEM VALUE}, postcheck bidireccional
+        (\texttt{to\_jsonb} + \texttt{EXCEPT ALL}), reajuste de secuencias con
+        \texttt{setval} y \texttt{ANALYZE}. El proceso es idempotente y con
+        rollback transaccional garantizado.
+  \item \textbf{Endurecimiento de PostgreSQL 16:} TLS 1.2 obligatorio con
+        \texttt{hostssl}, autenticación \texttt{scram-sha-256}, revocación de
+        \texttt{PUBLIC}, 7 roles con mínimo privilegio
+        (\texttt{admin\_dba}, \texttt{app\_core\_rw}, \texttt{auditor\_ro},
+        \texttt{migration\_loader} y 4 roles de administradores del equipo),
+        registro de conexiones, desconexiones y DDL.
+  \item \textbf{Enmascaramiento de datos sensibles:} la vista
+        \texttt{vw\_socios\_audit} expone CI/NIT, teléfono, correo y números de
+        cuenta enmascarados; \texttt{auditor\_ro} no tiene acceso directo a
+        tablas base sensibles.
+  \item \textbf{Respaldo cifrado y restauración:} \texttt{pg\_dump -Fc} cifrado
+        con AES-256-CBC y PBKDF2 (200.000 iteraciones), verificación SHA-256 y
+        prueba de restauración en base temporal con los 55 socios recuperados.
+  \item \textbf{Automatización y evidencias:} scripts reproducibles
+        (\texttt{01\_audit\_origin.sh}, \texttt{02\_migrate\_and\_backup.sh},
+        \texttt{03\_verify\_all.sh}) con salidas reales en \texttt{evidence/}.
+\end{enumerate}
+
+El proyecto cumple con los objetivos planteados: la base de datos de la
+cooperativa ahora opera sobre PostgreSQL 16, un motor moderno y soportado, con
+seguridad por capas, integridad referencial, datos sensibles enmascarados,
+respaldo cifrado verificable y un proceso de migración reproducible y
+automatizado.

@@ -1,0 +1,300 @@
+% ============================================================================
+%  CAPÍTULO I: INTRODUCCIÓN, CLIENTE Y ALCANCE
+% ============================================================================
+
+\section{Introducción}
+
+La Cooperativa de Ahorro y Crédito Horizonte PyME S.R.L. gestiona sus créditos
+y ahorros sobre una base de datos MySQL 5.7, motor que perdió el soporte
+oficial en octubre de 2023. Para resolver ese riesgo se migró la base a
+PostgreSQL 16, en un entorno desplegado íntegramente sobre contenedores Docker
+y orquestado con Docker Compose. La migración incluyó el diagnóstico del
+origen, el rediseño del esquema con tipos nativos, un proceso de carga
+reproducible, el endurecimiento (\emph{hardening}) del servidor destino, roles
+de mínimo privilegio, enmascaramiento de datos personales, respaldo cifrado y
+pruebas automatizadas de cada resultado.
+
+La migración se ejecutó sobre un conjunto de datos realista y determinista:
+8 tablas, 2 vistas, 19 entradas de índice, 55 socios, 66 cuentas de ahorro,
+50 solicitudes de crédito, 32 préstamos, 516 cuotas de amortización y 740
+transacciones, para un total de 1\,469 filas migradas. El origen ocupa
+0.28 MB y presenta incompatibilidades deliberadas con PostgreSQL: 7 columnas
+\texttt{ENUM}, 10 columnas \texttt{DATETIME}, 4 columnas \texttt{TINYINT(1)},
+claves \texttt{INT UNSIGNED AUTO\_INCREMENT}, collation \texttt{utf8\_general\_ci}
+y ausencia total de claves foráneas. Además, el usuario de aplicación
+\texttt{app\_legacy\_user} conserva un \texttt{GRANT ALL} sobre toda la base,
+lo que constituye un hallazgo de auditoría de primer orden.
+
+El destino se diseñó con \texttt{BOOLEAN}, \texttt{TIMESTAMPTZ},
+identidades \texttt{BIGINT GENERATED ALWAYS AS IDENTITY}, restricciones
+\texttt{CHECK}, 9 claves foráneas y 10 índices orientados a los reportes de
+cartera y saldos. El endurecimiento incluye TLS/SSL obligatorio con
+\texttt{hostssl}, autenticación \texttt{scram-sha-256}, revocación de
+privilegios de \texttt{PUBLIC}, tres roles granulares (\texttt{admin\_dba},
+\texttt{app\_core\_rw} y \texttt{auditor\_ro}), una vista enmascarada
+\texttt{vw\_socios\_audit} y registro de conexiones, desconexiones y DDL.
+El respaldo del destino se genera con \texttt{pg\_dump -Fc} y se cifra con
+AES-256-CBC y PBKDF2; la restauración se probó y devolvió los 55 socios
+esperados.
+
+La verificación final arrojó 75 pruebas automatizadas en estado \texttt{PASS},
+ninguna en \texttt{FAIL}, cero huérfanos en las 9 relaciones, conteos idénticos
+entre origen y destino en las 8 tablas, rechazo efectivo de conexiones sin SSL
+y acceso remoto directo de \texttt{postgres} bloqueado. Las consultas críticas
+se ejecutan en el servidor PostgreSQL en 0.236 ms y 0.317 ms, muy por debajo de
+cualquier umbral operativo para el volumen analizado. El proyecto se entrega
+con scripts, evidencias y anexos.
+
+\section{Descripción del cliente}
+
+La Cooperativa de Ahorro y Crédito Horizonte PyME S.R.L. es una institución
+financiera de alcance regional orientada a microcréditos para emprendedores,
+comercios locales y pequeñas y medianas empresas. Su operación se organiza en
+cinco sucursales (Central, Norte, Sur, Este y Oeste) y gira en torno a tres
+procesos de negocio: la captación de ahorro, la colocación de crédito y el
+seguimiento de la cartera. Los productos de crédito vigentes son personal,
+empresarial, educativo, médico y agrícola, cada uno con montos máximos, tasas
+y plazos diferenciados.
+
+El sistema de información administra el ciclo de vida completo del socio:
+registro y actualización de datos personales, apertura de cuentas de ahorro,
+presentación y evaluación de solicitudes de crédito, desembolso, generación
+de la tabla de amortización, registro de pagos y control de morosidad. Los
+reportes principales son la cartera en mora (\texttt{vw\_cartera\_mora}) y el
+resumen de saldos por socio (\texttt{vw\_resumen\_saldos\_socio}). La
+información tratada es financiera y personal: nombres, documentos de identidad,
+teléfonos, correos, direcciones, números de cuenta, saldos, montos de crédito
+y historial de pagos.
+
+Los interesados (\emph{stakeholders}) del proyecto son la Gerencia General,
+que necesita continuidad operativa y información oportuna para la toma de
+decisiones; la Unidad de Riesgos, que depende de la integridad de la cartera;
+la Unidad de Auditoría, que requiere trazabilidad y acceso controlado; el
+Área de Tecnología de la Información, responsable de la operación; y los
+socios, cuyos datos deben permanecer confidenciales y disponibles. La
+migración debe preservar la confianza de todos ellos: un dato perdido, una
+cuenta mal conciliada o una filtración de identidad tendrían consecuencias
+reputacionales, regulatorias y económicas.
+
+\subsection{Requisitos del cliente}
+
+A partir de las necesidades expresadas por los interesados se derivaron los
+requisitos que el sistema destino debía satisfacer. La
+Tabla~\ref{tab:requisitos-funcionales} enumera los requisitos funcionales.
+
+\begin{table}[H]
+  \centering
+  \caption{Requisitos funcionales del cliente}
+  \label{tab:requisitos-funcionales}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}C{0.9cm}L{4.4cm}L{10.2cm}@{}}
+        \toprule
+        \textbf{N.} & \textbf{Requisito} & \textbf{Descripción} \\
+        \midrule
+        1 & Migración íntegra & Traslado de las 8 tablas y las 2 vistas a PostgreSQL 16 preservando identificadores, integridad referencial y zona horaria. \\
+        2 & Endurecimiento del destino & TLS obligatorio, autenticación \texttt{scram-sha-256}, roles de mínimo privilegio y registro de conexiones y cambios de estructura. \\
+        3 & Enmascaramiento & Vista de auditoría con CI/NIT, teléfono, correo y cuenta enmascarados, sin exponer las tablas base. \\
+        4 & Respaldo cifrado y restauración & Generación de un respaldo cifrado y prueba de su restauración completa. \\
+        5 & Automatización y evidencias & Auditoría, migración y verificación con scripts reproducibles y evidencias reales. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+La Tabla~\ref{tab:requisitos-no-funcionales} complementa la lista anterior con
+los requisitos no funcionales.
+
+\begin{table}[H]
+  \centering
+  \caption{Requisitos no funcionales del cliente}
+  \label{tab:requisitos-no-funcionales}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}C{0.9cm}L{4.4cm}L{10.2cm}@{}}
+        \toprule
+        \textbf{N.} & \textbf{Requisito} & \textbf{Descripción} \\
+        \midrule
+        1 & Infraestructura & Ejecución de todo el entorno con Docker Compose, sin instalar motores en el sistema anfitrión. \\
+        2 & Sistema operativo y red & Linux en el laboratorio y puertos publicados solo en \texttt{127.0.0.1}. \\
+        3 & Zona horaria & \texttt{America/La\_Paz} para fechas y reportes. \\
+        4 & Entregables & Informe con la plantilla UPDS y demostración en vivo de 15--20 minutos, sin modificar \texttt{plantilla-latex/}. \\
+        5 & Datos & Datos sintéticos, sin información personal real. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+Cada requisito se verifica en el Capítulo~IV y se resume en la lista de
+cotejo del Anexo~C. La combinación de TLS, roles de mínimo privilegio,
+enmascaramiento y respaldo cifrado exigida por el cliente se corresponde con
+los controles recomendados por CIS, OWASP y NIST
+\citep{cis2024postgres,owasp2023asvs,nist80053}.
+
+\section{Problema de contexto}
+
+MySQL 5.7 alcanzó el fin de su vida útil el 31 de octubre de 2023
+\citep{oracle2023mysql57}. A partir de esa fecha Oracle dejó de publicar
+parches de seguridad y correcciones para la rama 5.7, de modo que cualquier
+vulnerabilidad descubierta queda sin remedio oficial. Para una entidad
+financiera, operar sobre un motor sin soporte implica aceptar un riesgo
+tecnológico y regulatorio que crece con el tiempo. El problema no es
+únicamente la versión: el esquema heredado arrastra decisiones de diseño que
+hoy resultan costosas.
+
+En primer lugar, el usuario de aplicación \texttt{app\_legacy\_user} tiene
+\texttt{GRANT ALL PRIVILEGES} sobre toda la base. Si la aplicación sufre una
+inyección SQL o un compromiso de credenciales, el atacante hereda permisos de
+lectura, escritura, eliminación y modificación de estructura. No existe
+separación entre la cuenta que opera el sistema y la cuenta que administra la
+base, ni entre la operación y la auditoría. En segundo lugar, las conexiones
+no exigen cifrado: el tráfico entre la aplicación y el motor puede viajar en
+texto claro dentro de la red, lo que expone credenciales y datos financieros.
+En tercer lugar, el esquema no declara claves foráneas, de modo que la
+integridad referencial depende por completo del código de la aplicación; una
+carga manual, un \emph{script} defectuoso o un borrado accidental pueden dejar
+cuentas sin socio, cuotas sin préstamo o transacciones sin cuenta.
+
+A lo anterior se suman las incompatibilidades de tipos. \texttt{TINYINT(1)}
+se usa como booleano, pero MySQL acepta valores distintos de 0 y 1;
+\texttt{ENUM} restringe los estados en el motor, pero no se traduce de forma
+directa a PostgreSQL; \texttt{DATETIME} no almacena zona horaria, lo que
+introduce ambigüedad en operaciones distribuidas; \texttt{INT UNSIGNED}
+duplica el rango positivo pero no existe como tipo nativo en PostgreSQL; y la
+collation \texttt{utf8\_general\_ci} corresponde a \texttt{utf8mb3}, una
+codificación de tres bytes que no cubre todos los caracteres Unicode. La
+Tabla~\ref{tab:riesgos-origen} resume los riesgos identificados y su efecto
+potencial.
+
+\begin{table}[H]
+  \centering
+  \caption{Riesgos detectados en el sistema de origen}
+  \label{tab:riesgos-origen}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{3.1cm}L{5.3cm}L{6.2cm}@{}}
+        \toprule
+        \textbf{Riesgo} & \textbf{Evidencia} & \textbf{Impacto potencial} \\
+        \midrule
+        Motor sin soporte & MySQL 5.7.44, EOL 31/10/2023 & Vulnerabilidades sin parche; incumplimiento de políticas de seguridad. \\
+        Privilegios excesivos & \texttt{GRANT ALL} a \texttt{app\_legacy\_user} & Compromiso total de la base ante una inyección o robo de credenciales. \\
+        Tráfico sin cifrado & Sin TLS obligatorio en el origen & Exposición de credenciales, saldos e identidades en la red. \\
+        Ausencia de claves foráneas & 0 \texttt{FOREIGN KEY} en el esquema & Huérfanos, inconsistencias y reportes financieros erróneos. \\
+        Tipos ambiguos & 7 \texttt{ENUM}, 10 \texttt{DATETIME}, 4 \texttt{TINYINT(1)} & Conversiones silenciosas, pérdida de zona horaria y validaciones débiles. \\
+        Collation limitada & \texttt{utf8\_general\_ci} (\texttt{utf8mb3}) & Caracteres no representables y comparaciones inconsistentes. \\
+        Auditoría insuficiente & Sin registro de conexiones ni DDL & Imposibilidad de reconstruir accesos y cambios. \\
+        Respaldo no cifrado & \texttt{mysqldump} en texto claro & Exposición de datos si el archivo de respaldo se filtra. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/01\_inventario\_origen.txt}.}
+\end{table}
+
+La cooperativa necesita modernizar su plataforma de datos sin detener la
+operación, sin perder información y sin repetir los defectos de seguridad del
+sistema heredado. La migración debe ser verificable, reversible y reproducible
+en cualquier equipo del grupo de trabajo.
+
+\section{Solución propuesta}
+
+La solución se apoya en cinco decisiones técnicas. La migración a
+PostgreSQL 16 aporta un motor con soporte activo, cumplimiento ACID, tipos
+nativos para booleanos, marcas de tiempo con zona horaria, identidades,
+restricciones \texttt{CHECK}, claves foráneas e índices avanzados
+\citep{postgresql2024}. El entorno completo se ejecuta con Docker Compose: un
+servicio MySQL 5.7 para el origen, un servicio PostgreSQL 16 para el destino y
+un contenedor migrador con Python, \texttt{pymysql} y \texttt{psycopg2}. Así se
+evita instalar motores en el sistema anfitrión y se garantiza que cualquier
+integrante levante el mismo escenario con un solo comando
+\citep{docker2024,compose2024}.
+
+Las transformaciones se definieron de forma explícita, regla por regla, en
+lugar de depender de una conversión automática genérica. El volumen es pequeño
+(0.28 MB), pero las reglas son específicas: convertir \texttt{TINYINT(1)} a
+\texttt{BOOLEAN}, \texttt{ENUM} a \texttt{VARCHAR} con \texttt{CHECK},
+\texttt{DATETIME} a \texttt{TIMESTAMPTZ} en la zona \texttt{America/La\_Paz},
+preservar los identificadores originales con \texttt{OVERRIDING SYSTEM VALUE}
+y reajustar las secuencias de identidad. Un ETL explícito permite auditar cada
+regla y repetir la carga de forma determinista.
+
+El proceso de migración se construyó sobre \textbf{pgloader}
+con schema de staging (\texttt{stg}), validación SQL previa (\texttt{precheck}),
+carga en una sola transacción con rollback garantizado (\texttt{postcheck}),
+reajuste de secuencias y \texttt{ANALYZE}. El ETL artesanal en Python
+(\texttt{src/migration/migrate.py}) fue archivado como legado y ya no se
+ejecuta.
+
+La seguridad se aplicó por capas. El perímetro exige TLS;
+la autenticación usa \texttt{scram-sha-256}; la autorización se basa en roles
+con privilegios mínimos; los datos sensibles se exponen a auditoría solo a
+través de una vista enmascarada; las conexiones y el DDL se registran; y los
+respaldos se cifran con AES-256-CBC. La Tabla~\ref{tab:solucion-componentes}
+relaciona cada componente con su propósito y su evidencia.
+
+\begin{table}[H]
+  \centering
+  \caption{Componentes de la solución propuesta}
+  \label{tab:solucion-componentes}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{3.5cm}L{6.0cm}L{5.0cm}@{}}
+        \toprule
+        \textbf{Componente} & \textbf{Propósito} & \textbf{Evidencia} \\
+        \midrule
+        \texttt{docker-compose.yml} & Orquestar origen, destino, migrador y documentación & Servicios \emph{healthy}; puertos en \texttt{127.0.0.1}. \\
+        \texttt{src/origin/} & Esquema y datos legacy reproducibles & 8 tablas, 2 vistas, 1\,469 filas. \\
+        \texttt{src/target/} & Esquema destino, roles y configuración endurecida & 9 claves foráneas, 3 roles, SSL y \texttt{pg\_hba}. \\
+        \texttt{src/migration/} & pgloader + staging, precheck, postcheck y rollback transaccional & 1\,469 filas, 0 rechazos, 0 errores. \\
+        \texttt{scripts/} & Auditoría, migración, respaldo y pruebas & 3 scripts y 3 evidencias reales. \\
+        \texttt{docs/} & Informe, anexos y guion de demostración & PDF compilable y guion de 15--20 min. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+\section{Alineación con los ODS 8 y 9}
+
+El proyecto se alinea con el Objetivo de Desarrollo Sostenible 8 (Trabajo
+decente y crecimiento económico) porque mejora la capacidad de la cooperativa
+para otorgar microcréditos de forma oportuna. La meta 8.3 promueve la
+formalización y el crecimiento de las micro, pequeñas y medianas empresas; la
+meta 8.10 busca fortalecer la capacidad de las instituciones financieras para
+ampliar el acceso a servicios bancarios y financieros \citep{un2023ods8}. Al
+reducir el tiempo de aprobación y desembolso, y al disminuir el riesgo de
+errores en la cartera, la migración contribuye directamente a que más
+emprendedores accedan a capital de trabajo.
+
+El ODS 9 (Industria, innovación e infraestructura) se relaciona con la
+modernización de una infraestructura crítica de datos. La
+meta 9.1 promueve infraestructuras fiables, sostenibles y resilientes; la meta
+9.5 fortalece la investigación y la capacidad tecnológica; y la meta 9.c
+busca ampliar el acceso a las tecnologías de la información y las
+comunicaciones \citep{un2023ods9}. La contenerización, el cifrado, la
+automatización de pruebas y la documentación reproducible son aportes
+concretos a una infraestructura más resiliente y gobernable.
+
+\begin{table}[H]
+  \centering
+  \caption{Contribución del proyecto a los ODS 8 y 9}
+  \label{tab:ods}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{1.8cm}L{2.2cm}L{5.6cm}L{4.9cm}@{}}
+        \toprule
+        \textbf{ODS} & \textbf{Meta} & \textbf{Aporte del proyecto} & \textbf{Indicador de logro} \\
+        \midrule
+        ODS 8 & 8.3 & Agiliza la evaluación y el desembolso de microcréditos a pymes y emprendedores. & Tiempo de consulta de cartera y saldos en el orden de milisegundos. \\
+        ODS 8 & 8.10 & Amplía el acceso a servicios financieros con información íntegra y disponible. & 55 socios y 66 cuentas migrados sin pérdida. \\
+        ODS 9 & 9.1 & Sustituye una infraestructura obsoleta por una plataforma resiliente y reproducible. & Entorno Docker Compose levantado desde cero. \\
+        ODS 9 & 9.5 & Incorpora automatización, pruebas y documentación técnica reutilizable. & 75 pruebas PASS y 3 evidencias reales. \\
+        ODS 9 & 9.c & Facilita el acceso seguro a TIC mediante TLS, SCRAM y roles mínimos. & Conexiones sin SSL rechazadas; 7 roles auditados. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con base en \citet{un2023ods8} y \citet{un2023ods9}.}
+\end{table}
+
+

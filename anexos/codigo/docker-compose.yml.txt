@@ -1,0 +1,108 @@
+services:
+  db-origen:
+    image: mysql:5.7
+    container_name: coop_horizonte_legacy
+    restart: unless-stopped
+    command: --character-set-server=utf8 --collation-server=utf8_general_ci
+    environment:
+      MYSQL_DATABASE: coop_horizonte_legacy
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      TZ: ${TZ}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./src/origin:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks:
+      - red_cooperativa
+
+  db-destino:
+    image: postgres:16
+    container_name: coop_horizonte_core
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: coop_horizonte_core
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/target/ssl:/etc/postgresql/ssl:ro
+      - ./src/target/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./src/target/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./src/target/01_schema_target.sql:/docker-entrypoint-initdb.d/01_schema_target.sql:ro
+      - ./src/target/02_hardening_roles.sql:/docker-entrypoint-initdb.d/02_hardening_roles.sql:ro
+      - ./src/target/docker/entrypoint.sh:/usr/local/bin/pg-entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/pg-entrypoint.sh"]
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d coop_horizonte_core"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks:
+      - red_cooperativa
+
+  migrador:
+    build:
+      context: ./src/migration
+    container_name: coop_horizonte_migrador
+    depends_on:
+      db-origen:
+        condition: service_healthy
+      db-destino:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: db-origen
+      MYSQL_PORT: "3306"
+      MYSQL_DB: coop_horizonte_legacy
+      MYSQL_USER: app_legacy_user
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD}
+      MIGRATION_LOADER_USER: migration_loader
+      MIGRATION_LOADER_PASSWORD: ${MIGRATION_LOADER_PASSWORD}
+      PGHOST: db-destino
+      PGPORT: "5432"
+      PGDATABASE: coop_horizonte_core
+      PGUSER: admin_dba
+      PGPASSWORD: ${ADMIN_DBA_PASSWORD}
+      PGSSLMODE: verify-ca
+      PGSSLROOTCERT: /etc/postgresql/ssl/server.crt
+      # pgloader valida el certificado del servidor contra este archivo.
+      SSL_CERT_FILE: /etc/postgresql/ssl/server.crt
+      TZ: ${TZ}
+    volumes:
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+      - ./src/target/ssl/server.crt:/etc/postgresql/ssl/server.crt:ro
+    entrypoint: ["/bin/bash", "-lc"]
+    command: ["sleep infinity"]
+    networks:
+      - red_cooperativa
+
+  docs:
+    image: texlive/texlive:latest
+    profiles: ["docs"]
+    working_dir: /docs
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      HOME: /tmp
+    volumes:
+      - ./docs:/docs
+    command: ["make"]
+
+volumes:
+  mysql_data:
+  postgres_data:
+
+networks:
+  red_cooperativa:
+    driver: bridge

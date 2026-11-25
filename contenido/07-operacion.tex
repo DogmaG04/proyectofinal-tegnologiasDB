@@ -1,0 +1,289 @@
+% ============================================================================
+%  CAPÍTULO III: DESARROLLO DEL TRABAJO (parte 3)
+% ============================================================================
+
+\section{Consideraciones del sistema operativo destino}
+
+\subsection{Aislamiento con contenedores}
+
+El entorno se ejecuta sobre un host Linux con Docker Engine y Docker Compose
+v2. Cada servicio corre en su propio contenedor, con su propio sistema de
+archivos, su propia pila de red y sus propios límites de recursos. Los
+contenedores comparten el núcleo del host, pero no comparten el espacio de
+usuarios ni los procesos. Esa separación reduce el impacto de una
+vulnerabilidad en un servicio y facilita la reproducibilidad
+\citep{docker2024}.
+
+Los puertos se publican únicamente en \texttt{127.0.0.1}. Esa decisión evita
+que MySQL o PostgreSQL queden accesibles desde la red local o desde Internet.
+Si un integrante necesita conectarse con una herramienta gráfica, puede usar
+un túnel SSH o una regla explícita; no se abre el puerto a \texttt{0.0.0.0}
+por comodidad. La red interna \texttt{red\_cooperativa} permite que el
+migrador resuelva \texttt{db-origen} y \texttt{db-destino} por nombre, sin
+exponer los motores fuera del proyecto. El contenedor del migrador está
+construido sobre \texttt{postgres:16} con \texttt{pgloader} 3.6.10,
+\texttt{gettext-base} y \texttt{tzdata}; ya no requiere Python ni controladores
+en el host.
+
+\subsection{Permisos de archivos y secretos}
+
+La clave privada TLS \texttt{server.key} tiene permisos \texttt{600} y
+pertenece al usuario \texttt{postgres}. El certificado \texttt{server.crt}
+tiene permisos \texttt{644}. El archivo \texttt{.env} contiene las
+contraseñas de laboratorio, no se versiona y está incluido en
+\texttt{.gitignore}. Los respaldos se guardan en \texttt{backups/}, también
+excluido del control de versiones. En producción, las credenciales deben
+gestionarse con un gestor de secretos y no con un archivo de texto.
+
+\begin{table}[H]
+  \centering
+  \caption{Consideraciones del sistema operativo y del host}
+  \label{tab:so}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{3.4cm}L{5.4cm}L{5.4cm}@{}}
+        \toprule
+        \textbf{Área} & \textbf{Configuración aplicada} & \textbf{Recomendación de producción} \\
+        \midrule
+        Aislamiento & Contenedores separados; red interna; puertos en \texttt{127.0.0.1}. & Mantener; añadir políticas de red y \emph{firewall}. \\
+        Permisos & \texttt{server.key} en \texttt{600}; \texttt{.env} fuera de git. & Gestor de secretos; rotación; auditoría de accesos. \\
+        Recursos & Sin límites explícitos en el laboratorio. & Definir \texttt{cpus}, \texttt{mem\_limit} y alertas. \\
+        Registros & \texttt{docker logs}; \texttt{log\_line\_prefix}. & Rotación, recolección central y retención. \\
+        Actualizaciones & Imágenes fijadas por versión mayor. & Escaneo de vulnerabilidades y parches programados. \\
+        Zona horaria & \texttt{America/La\_Paz} en ambos motores. & Documentar y validar en reportes contables. \\
+        Respaldos & Volúmenes nombrados; respaldo lógico cifrado. & Copia fuera del sitio y pruebas de restauración. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+\subsection{Zona horaria y consistencia temporal}
+
+Ambos motores se configuraron con la zona \texttt{America/La\_Paz}. En MySQL,
+la zona afecta la interpretación de \texttt{DATETIME} y las funciones de
+fecha; en PostgreSQL, afecta la visualización de \texttt{TIMESTAMPTZ} y el
+valor de \texttt{now()}. La migración asigna la zona en el ETL y el servidor
+la conserva en las consultas. Para una entidad financiera, la consistencia
+temporal es parte de la integridad: un pago no debe caer en el día anterior
+o siguiente por un desajuste de zona.
+
+\subsection{Actualizaciones y cadena de suministro}
+
+Las imágenes se fijan por versión mayor (\texttt{mysql:5.7} y
+\texttt{postgres:16}). En producción se recomienda fijar una versión exacta
+(\emph{digest}) para evitar cambios inesperados, escanear las imágenes con una
+herramienta de vulnerabilidades y actualizar con un proceso controlado. La
+imagen de documentación (\texttt{texlive/texlive}) solo se usa en el perfil
+\texttt{docs} y no forma parte del entorno operativo.
+
+\section{Bitácora de problemas, decisiones y lecciones aprendidas}
+\label{sec:bitacora}
+
+\subsection{Problemas encontrados}
+
+La Tabla~\ref{tab:bitacora} documenta los problemas reales que surgieron
+durante la implementación. No se trata de una lista teórica: cada fila tiene
+un síntoma, una causa, una solución y una evidencia. Documentar los errores es
+parte del valor del proyecto, porque evita que el próximo equipo repita el
+mismo camino.
+
+\begingroup
+\setstretch{1}\small\sloppy\emergencystretch=3em\relax
+\begin{longtable}{@{}C{0.8cm}L{3.4cm}L{3.8cm}L{5.4cm}@{}}
+  \caption{Bitácora de problemas y soluciones}\label{tab:bitacora}\\
+  \toprule
+  \textbf{\#} & \textbf{Síntoma} & \textbf{Causa} & \textbf{Solución aplicada} \\
+  \midrule
+  \endfirsthead
+  \multicolumn{4}{c}{\textit{Continuación de la Tabla~\ref{tab:bitacora}}}\\
+  \toprule
+  \textbf{\#} & \textbf{Síntoma} & \textbf{Causa} & \textbf{Solución aplicada} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endlastfoot
+  1 & El origen no tenía tablas al iniciar. & El volumen se creó antes de cargar el esquema; el entrypoint no se ejecutó. & Se recreó el volumen con \texttt{down -v} y se cargó el esquema en el primer arranque. \\
+  2 & El seed inicial fallaba por cadenas sin comillas. & SQL generado a mano con valores de texto sin entrecomillar. & Se reemplazó por un generador Python determinista con \texttt{seed=42}. \\
+  3 & \texttt{TRUNCATE ... RESTART IDENTITY} fallaba por permisos. & \texttt{admin\_dba} no era propietario de las secuencias de identidad. & Se eliminó \texttt{RESTART IDENTITY} y se usó \texttt{setval} al final. \\
+  4 & PostgreSQL reiniciaba por certificado faltante. & La configuración apuntaba a una ruta no escribible o inexistente. & El entrypoint copia los certificados a \texttt{/var/lib/postgresql/ssl} y ajusta permisos. \\
+  5 & El healthcheck generaba errores de \texttt{peer}. & Se ejecutaba como \texttt{root} con \texttt{-U postgres} por socket. & Se mantuvo el healthcheck; el contenedor queda \emph{healthy}; los errores son de autenticación \texttt{peer}, no de disponibilidad. \\
+  6 & \texttt{auditor\_ro} podía ver datos sensibles. & La vista \texttt{vw\_cartera\_mora} exponía \texttt{numero\_identificacion}. & Se revocó el acceso a esa vista y se dejó solo \texttt{vw\_socios\_audit}. \\
+  7 & El acceso remoto de \texttt{postgres} era posible. & \texttt{pg\_hba} incluía una regla \texttt{host} amplia. & Se eliminó la regla remota; solo \texttt{local peer}. \\
+  8 & Las fechas perdían zona horaria. & \texttt{DATETIME} no almacena zona; el ETL no la asignaba. & Se usó \texttt{ZoneInfo("America/La\_Paz")} y \texttt{TIMESTAMPTZ}. \\
+  9 & Los nuevos \texttt{INSERT} chocaban con IDs existentes. & Las secuencias no se reajustaron después de insertar IDs explícitos. & \texttt{setval} con \texttt{MAX(id)} en cada tabla. \\
+  10 & El ETL no era idempotente. & Una segunda ejecución duplicaba filas. & \texttt{TRUNCATE} previo y snapshot consistente; verificación de conteos. \\
+  11 & \texttt{postgres:16} es Debian 13 (trixie). & El paquete disponible es pgloader 3.6.10, no 3.6.9. & Se usó pgloader 3.6.10 (misma rama estable 3.6.x). \\
+  12 & pgloader 3.6.10 verifica el certificado con \texttt{sslmode=require}. & \texttt{--no-ssl-cert-verification} no lo desactiva. & Se usó \texttt{SSL\_CERT\_FILE=/etc/postgresql/ssl/server.crt}. \\
+  13 & pgloader no tiene opción \texttt{create no schema} para MySQL. & Crea un schema con el nombre de la base origen. & Se resolvió con \texttt{ALTER SCHEMA ... RENAME TO 'stg'}. \\
+  14 & \texttt{ANALYZE} exige ser dueño en PostgreSQL 16. & \texttt{MAINTAIN} recién aparece en PG 17. & Se ejecuta como \texttt{postgres} por socket local. \\
+  15 & pgloader escribe rechazos en \texttt{/tmp/pgloader/} por defecto. & Ruta por defecto no configurable sin parámetro. & Se usó \texttt{--root-dir /tmp/pgloader-work}. \\
+  16 & Tags flotantes sin fijar por digest. & \texttt{mysql:5.7} y \texttt{postgres:16} pueden cambiar. & Mejora pendiente para producción: fijar por digest. \\
+\end{longtable}
+\fuenteAPA{Elaboración propia con base en la ejecución real y \texttt{evidence/}.}
+\endgroup
+
+\subsection{Decisiones de diseño}
+
+La Tabla~\ref{tab:decisiones} resume las decisiones más importantes y su
+justificación. Algunas fueron técnicamente debatibles; se documentan para que
+el lector pueda evaluarlas y, si es necesario, cambiarlas con conocimiento de
+causa.
+
+\begin{table}[H]
+  \centering
+  \caption{Decisiones de diseño y su justificación}
+  \label{tab:decisiones}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{3.8cm}L{4.4cm}L{6.0cm}@{}}
+        \toprule
+        \textbf{Decisión} & \textbf{Alternativa descartada} & \textbf{Justificación} \\
+        \midrule
+        ETL propio en Python & pgloader u otra herramienta genérica & Control explícito de tipos, zona horaria, identidades y verificación; el volumen es pequeño. \\
+        Conservar nombres de origen & Renombrar columnas a un estándar nuevo & Reduce el impacto en la aplicación y facilita la comparación. \\
+        \texttt{TIMESTAMPTZ} en \texttt{America/La\_Paz} & \texttt{TIMESTAMP} sin zona & Evita ambigüedad en pagos y reportes contables. \\
+        \texttt{admin\_dba} sin \texttt{SUPERUSER} & Superusuario para todo & Limita el daño de un error o compromiso. \\
+        Sin \texttt{RESTART IDENTITY} & \texttt{TRUNCATE ... RESTART IDENTITY} & Evita el error de propiedad de secuencias; \texttt{setval} es explícito. \\
+        Puertos en \texttt{127.0.0.1} & Publicar en \texttt{0.0.0.0} & Reduce la exposición; el acceso remoto se hace por túnel. \\
+        Vista enmascarada & Copia anonimizada completa & Permite auditoría sin duplicar datos ni romper referencias. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+\subsection{Lecciones aprendidas}
+
+La primera lección es que la migración empieza por el diagnóstico, no por la
+copia. Sin inventario, sin conteos y sin matriz de incompatibilidades, el ETL
+es una caja negra. La segunda es que la seguridad debe diseñarse desde el
+principio: si se deja para el final, se convierte en una capa de parches. La
+tercera es que las pruebas deben ser automatizadas y comparar valores
+esperados, no solo imprimir resultados. La cuarta es que la documentación de
+los errores es tan valiosa como la de los aciertos: el problema de
+\texttt{TRUNCATE ... RESTART IDENTITY} habría costado horas a otro equipo. La
+quinta es que la reproducibilidad no es un lujo: es la única forma de afirmar
+que el resultado es confiable.
+
+\section{Lista de cotejo de seguridad}
+
+La Tabla~\ref{tab:checklist} presenta la lista de cotejo aplicada. Cada
+control tiene un estado y una evidencia. Los controles marcados como
+``Cumple'' se verificaron en el entorno; los marcados como ``Recomendado'' son
+mejoras para producción que no forman parte del alcance del laboratorio.
+
+\begin{table}[H]
+  \centering
+  \caption{Lista de cotejo de seguridad}
+  \label{tab:checklist}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}C{0.7cm}L{6.0cm}L{2.2cm}L{5.0cm}@{}}
+        \toprule
+        \textbf{\#} & \textbf{Control} & \textbf{Estado} & \textbf{Evidencia} \\
+        \midrule
+        1 & TLS obligatorio para conexiones TCP. & Cumple & \texttt{hostssl}; sin SSL rechazado. \\
+        2 & Autenticación \texttt{scram-sha-256}. & Cumple & \texttt{SHOW password\_encryption}. \\
+        3 & \texttt{postgres} sin acceso remoto. & Cumple & Regla \texttt{local peer} únicamente. \\
+        4 & Revocación de \texttt{PUBLIC}. & Cumple & \texttt{has\_schema\_privilege}. \\
+        5 & Roles de mínimo privilegio. & Cumple & 3 roles auditados. \\
+        6 & \texttt{app\_core\_rw} sin DDL ni \texttt{TRUNCATE}. & Cumple & \texttt{has\_table\_privilege}. \\
+        7 & \texttt{auditor\_ro} sin acceso a tablas sensibles. & Cumple & \texttt{permission denied}. \\
+        8 & Enmascaramiento de CI/NIT y cuentas. & Cumple & \texttt{vw\_socios\_audit}. \\
+        9 & Registro de conexiones y desconexiones. & Cumple & \texttt{log\_connections}. \\
+        10 & Registro de DDL. & Cumple & \texttt{log\_statement = 'ddl'}. \\
+        11 & Respaldo cifrado AES-256-CBC. & Cumple & \texttt{target\_*.dump.enc}. \\
+        12 & Verificación SHA-256 de respaldos. & Cumple & \texttt{sha256sum}. \\
+        13 & Restauración probada. & Cumple & 55 socios restaurados. \\
+        14 & Clave privada TLS con permisos \texttt{600}. & Cumple & \texttt{ls -l}. \\
+        15 & Puertos en \texttt{127.0.0.1}. & Cumple & \texttt{docker compose ps}. \\
+        16 & \texttt{.env} fuera de git. & Cumple & \texttt{.gitignore}. \\
+        17 & Integridad referencial declarada. & Cumple & 9 FK. \\
+        18 & Conteos origen--destino verificados. & Cumple & 8 tablas OK. \\
+        19 & Consultas críticas con plan medido. & Cumple & \texttt{EXPLAIN ANALYZE}. \\
+        20 & Imágenes fijadas por versión. & Parcial & \texttt{mysql:5.7}, \texttt{postgres:16}. \\
+        21 & Gestor de secretos en producción. & Recomendado & No aplica al laboratorio. \\
+        22 & Rotación de logs y retención. & Recomendado & Política propuesta. \\
+        23 & Copia de respaldo fuera del sitio. & Recomendado & Regla 3-2-1. \\
+        24 & Monitoreo y alertas. & Recomendado & PgBouncer, consultas lentas. \\
+        25 & Pruebas de carga y \emph{failover}. & Recomendado & Fase futura. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con base en \citet{cis2024postgres}, \citet{owasp2023asvs} y \citet{nist80053}.}
+\end{table}
+
+\section{Trazabilidad de evidencias}
+
+La Tabla~\ref{tab:trazabilidad} relaciona cada punto exigido con la sección
+del informe, el archivo de evidencia y el resultado. Esta tabla es la prueba
+de que el informe no es una narración independiente de los datos: cada
+afirmación tiene un origen verificable.
+
+\begin{table}[H]
+  \centering
+  \caption{Trazabilidad de los puntos exigidos}
+  \label{tab:trazabilidad}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}C{0.7cm}L{4.6cm}L{3.8cm}L{4.6cm}@{}}
+        \toprule
+        \textbf{\#} & \textbf{Punto exigido} & \textbf{Evidencia} & \textbf{Resultado} \\
+        \midrule
+        1 & Portada, resumen, objetivos y alcance. & Este documento & Secciones 1.1--1.7. \\
+        2 & Cliente, problema, solución y ODS. & Este documento & Secciones 1.2--1.5. \\
+        3 & Diagnóstico del origen. & \texttt{evidence/01} & 8 tablas, 2 vistas, 0.28 MB. \\
+        4 & Hardening y verificación. & \texttt{evidence/03} & 75 PASS, 0 FAIL. \\
+        5 & Plan de migración y contingencia. & Este documento & Sección 3.1. \\
+        6 & Ejecución y salidas reales. & \texttt{evidence/02} & 1\,469 filas, 0 diferencias. \\
+        7 & Pruebas en destino. & \texttt{evidence/03} & Conteos, FK y rendimiento. \\
+        8 & Confidencialidad y escalabilidad. & Este documento & Sección 3.8. \\
+        9 & Consideraciones del SO. & Este documento & Sección 3.9. \\
+        10 & Bitácora y lecciones. & Este documento & Sección 3.10. \\
+        11 & Conclusiones, recomendaciones y bibliografía. & Este documento & Capítulo 5 y referencias. \\
+        12 & Anexos y lista de cotejo. & Anexos A--C & Scripts completos. \\
+        13 & Guion de demostración. & \texttt{GUION\_DEMO\_EN\_VIVO.md} & 15--20 min. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+\section{Reproducibilidad y transferencia}
+
+\subsection{Procedimiento de ejecución}
+
+El procedimiento completo se ejecuta en cuatro pasos. Primero, se copia el
+archivo \texttt{.env.example} a \texttt{.env} y se ajustan las credenciales.
+Segundo, se levanta el entorno con \texttt{docker compose up -d --build}.
+Tercero, se ejecutan los scripts en orden. Cuarto, se revisan las evidencias y
+se compila el informe. La secuencia exacta se muestra a continuación.
+
+\begin{lstlisting}[style=terminal,caption={Secuencia de reproducción del proyecto},label={lst:reproduccion}]
+cp .env.example .env
+docker compose up -d --build
+./scripts/01_audit_origin.sh
+./scripts/02_migrate_and_backup.sh
+./scripts/03_verify_all.sh
+docker compose --profile docs run --rm docs make
+\end{lstlisting}
+
+\subsection{Resultados esperados}
+
+Si el entorno se levanta desde cero, los resultados esperados son: 8 tablas y
+2 vistas en el origen; 55 socios, 66 cuentas, 50 solicitudes, 32 préstamos,
+516 cuotas y 740 transacciones; 1\,469 filas migradas; 75 pruebas en
+\texttt{PASS}; y un PDF en \texttt{docs/main.pdf}. Cualquier diferencia debe
+investigarse antes de aceptar la migración. La semilla fija del generador
+garantiza que los datos sean los mismos en cada ejecución.
+
+\subsection{Transferencia}
+
+El proyecto se entrega con la siguiente estructura: \texttt{src/} (esquemas,
+seed, ETL y configuración), \texttt{scripts/} (automatización),
+\texttt{evidence/} (salidas reales), \texttt{backups/} (respaldos cifrados),
+\texttt{docs/} (informe, anexos y guion) y \texttt{docker-compose.yml}. Las
+credenciales de laboratorio están en \texttt{.env.example}; las reales no se
+versionan. El lector puede reproducir el entorno en cualquier host Linux con
+Docker y Docker Compose, sin instalar MySQL ni PostgreSQL en el sistema.

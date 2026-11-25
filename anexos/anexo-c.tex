@@ -1,0 +1,83 @@
+% ============================================================================
+%  ANEXO C: CHECKLIST DE ACEPTACIÓN Y EVIDENCIAS
+% ============================================================================
+
+\section{Checklist de aceptación y evidencias (Anexo C)}
+
+Este anexo reúne la lista de cotejo de aceptación y las evidencias reales
+generadas por los scripts. Las evidencias se presentan como capturas de la
+salida real de los scripts; los archivos de texto originales se conservan en
+\texttt{evidence/} y cualquier lector puede contrastarlos con la salida de los
+scripts descritos en el Anexo~B.
+
+\subsection{Checklist de aceptación}
+
+La Tabla~\ref{tab:checklist-aceptacion} enumera los criterios que debían
+cumplirse para aceptar la migración. Todos los criterios obligatorios se
+cumplieron; los recomendados quedaron documentados como trabajo futuro.
+
+\begin{table}[H]
+  \centering
+  \caption{Checklist de aceptación de la migración}
+  \label{tab:checklist-aceptacion}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}C{0.7cm}L{7.0cm}C{2.2cm}L{4.4cm}@{}}
+        \toprule
+        \textbf{\#} & \textbf{Criterio} & \textbf{Estado} & \textbf{Evidencia} \\
+        \midrule
+        1 & Entorno levantado con un solo comando. & Cumple & \texttt{docker compose up}. \\
+        2 & 8 tablas y 2 vistas creadas en el origen. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-inventario-1}--\ref{fig:anexo-inventario-2}. \\
+        3 & 1\,469 filas migradas sin pérdida. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-migracion-1}--\ref{fig:anexo-migracion-2}. \\
+        4 & Conteos idénticos en las 8 tablas. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
+        5 & 9 claves foráneas sin huérfanos. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
+        6 & TLS obligatorio y conexiones sin SSL rechazadas. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
+        7 & Autenticación \texttt{scram-sha-256}. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
+        8 & Tres roles de mínimo privilegio. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
+        9 & \texttt{auditor\_ro} sin acceso a tablas sensibles. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
+        10 & Enmascaramiento de CI/NIT y cuentas. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
+        11 & Respaldo cifrado con AES-256-CBC. & Cumple & \texttt{backups/}. \\
+        12 & Restauración verificada con 55 socios. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-migracion-1}--\ref{fig:anexo-migracion-2}. \\
+        13 & 75 pruebas en \texttt{PASS} y 0 en \texttt{FAIL}. & Cumple & Anexo~C, Figs.~\ref{fig:anexo-pruebas-1}--\ref{fig:anexo-pruebas-3}. \\
+        14 & Informe compilado y guion de demo. & Cumple & \texttt{docs/}. \\
+        15 & Copia de respaldo fuera del sitio. & Recomendado & Trabajo futuro. \\
+        16 & Monitoreo, alertas y PgBouncer. & Recomendado & Trabajo futuro. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con base en la ejecución real del proyecto.}
+\end{table}
+
+\subsection{Evidencia 1: inventario del origen}
+
+\capturaAPA{fig:anexo-inventario-1}{Inventario del origen: versión, tablas y conteos}%
+  {captura-anexo-inventario-1.png}%
+  {Salida de \texttt{scripts/01\_audit\_origin.sh} con la versión de MySQL, las tablas y sus conteos.}
+
+\capturaAPA{fig:anexo-inventario-2}{Inventario del origen: índices, usuarios y privilegios}%
+  {captura-anexo-inventario-2.png}%
+  {Salida del inventario con los índices, el usuario \texttt{app\_legacy\_user} y sus \texttt{GRANT ALL}.}
+
+\subsection{Evidencia 2: ejecución de la migración}
+
+\capturaAPA{fig:anexo-migracion-1}{Ejecución de la migración: carga y conteos}%
+  {captura-anexo-migracion-1.png}%
+  {Salida del ETL con la carga de las 8 tablas y la verificación de conteos origen--destino.}
+
+\capturaAPA{fig:anexo-migracion-2}{Respaldo cifrado y restauración}%
+  {captura-anexo-migracion-2.png}%
+  {Respaldo cifrado con AES-256-CBC y restauración verificada con 55 socios.}
+
+\subsection{Evidencia 3: pruebas y hardening}
+
+\capturaAPA{fig:anexo-pruebas-1}{Pruebas de SSL, \texttt{pg\_hba} y roles}%
+  {captura-anexo-pruebas-1.png}%
+  {Salida de \texttt{scripts/03\_verify\_all.sh} con el rechazo de conexiones sin SSL y la matriz de roles.}
+
+\capturaAPA{fig:anexo-pruebas-2}{Enmascaramiento, conteos e integridad referencial}%
+  {captura-anexo-pruebas-2.png}%
+  {Salida de las pruebas de enmascaramiento, conteos origen--destino e integridad de las 9 claves foráneas.}
+
+\capturaAPA{fig:anexo-pruebas-3}{Resumen de la verificación}%
+  {captura-anexo-pruebas-3.png}%
+  {Resumen final de \texttt{scripts/03\_verify\_all.sh}: \texttt{PASS: 75} y \texttt{FAIL: 0}.}

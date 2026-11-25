@@ -1,0 +1,353 @@
+% ============================================================================
+%  CAPÍTULO II: DIAGNÓSTICO DEL ORIGEN Y HARDENING DEL DESTINO
+% ============================================================================
+
+\section{Arquitectura del sistema de origen}
+
+El sistema de origen es una instalación MySQL 5.7.44 sobre Linux, ejecutada
+en el contenedor \texttt{coop\_horizonte\_legacy}. La base se denomina
+\texttt{coop\_horizonte\_legacy}, usa el motor InnoDB y la collation
+\texttt{utf8\_general\_ci}. La aplicación legacy se conecta con el usuario
+\texttt{app\_legacy\_user}, creado con \texttt{GRANT ALL PRIVILEGES} sobre
+toda la base. No existe una cuenta separada para auditoría, no se exige TLS
+y no hay un esquema de respaldo cifrado dentro del flujo operativo.
+
+La Figura~\ref{fig:arquitectura-origen} representa la arquitectura
+encontrada. La aplicación y el motor comparten la red del contenedor; el
+tráfico no está cifrado y el usuario de aplicación puede ejecutar DDL, DML y
+DCL. El puerto 3306 se publica únicamente en \texttt{127.0.0.1}, lo que
+reduce la exposición desde la red del anfitrión, pero no corrige los
+problemas internos de privilegios ni la falta de cifrado.
+
+\figuraAPA{fig:arquitectura-origen}{Arquitectura del sistema de origen MySQL 5.7}{%
+  \begin{tikzpicture}[
+      nodo/.style={draw, rounded corners, minimum width=3.2cm,
+                   minimum height=1.0cm, align=center, font=\small},
+      riesgo/.style={draw, dashed, rounded corners, minimum width=3.2cm,
+                     minimum height=0.8cm, align=center, font=\scriptsize,
+                     text=black!70},
+      linea/.style={-Stealth, thick}]
+    \node[nodo] (app) {Aplicación\\legacy};
+    \node[nodo, right=2.4cm of app] (db) {MySQL 5.7.44\\\texttt{coop\_horizonte\_legacy}};
+    \node[riesgo, below=0.9cm of app] (r1) {Sin TLS};
+    \node[riesgo, below=0.9cm of db] (r2) {\texttt{GRANT ALL}};
+    \draw[linea] (app) -- node[above, font=\scriptsize]{TCP/3306} (db);
+    \draw[dashed, red!60] (r1) -- (app);
+    \draw[dashed, red!60] (r2) -- (db);
+  \end{tikzpicture}%
+}{Elaboración propia con datos de \texttt{evidence/01\_inventario\_origen.txt}.}
+
+\capturaAPA{fig:cap-origen-version}{Versión y base de datos del sistema de origen}%
+  {captura-origen-version.png}%
+  {Salida de \texttt{SELECT VERSION();} y \texttt{SHOW DATABASES;} en MySQL 5.7.44.}
+
+El origen contiene 8 tablas de negocio, 2 vistas, 19 entradas de índice y un
+solo usuario de aplicación. La Tabla~\ref{tab:inventario-origen} resume el
+inventario. El tamaño total reportado por \texttt{information\_schema} es de
+0.28 MB, un volumen pequeño que permite una ventana de migración corta y un
+enfoque de corte controlado (\emph{big bang}) en lugar de replicación continua.
+
+\begin{table}[H]
+  \centering
+  \caption{Inventario de objetos del sistema de origen}
+  \label{tab:inventario-origen}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{4.6cm}C{2.0cm}L{7.9cm}@{}}
+        \toprule
+        \textbf{Tipo de objeto} & \textbf{Cantidad} & \textbf{Detalle} \\
+        \midrule
+        Tablas base & 8 & \texttt{sucursales}, \texttt{socios}, \texttt{cuentas\_ahorro}, \texttt{tipos\_credito}, \texttt{solicitudes\_credito}, \texttt{prestamos}, \texttt{cuotas\_amortizacion}, \texttt{transacciones}. \\
+        Vistas & 2 & \texttt{vw\_cartera\_mora} y \texttt{vw\_resumen\_saldos\_socio}. \\
+        Entradas de índice & 19 & 8 claves primarias, 3 \texttt{UNIQUE} y 8 índices no únicos (uno compuesto). \\
+        Secuencias & 0 & MySQL 5.7 no define objetos \texttt{SEQUENCE}; 8 columnas \texttt{AUTO\_INCREMENT} pasan a identidades en PostgreSQL. \\
+        Usuarios de aplicación & 1 & \texttt{app\_legacy\_user} con \texttt{GRANT ALL}. \\
+        Claves foráneas & 0 & La integridad referencial no está declarada en el motor. \\
+        Tamaño de la base & 0.28 MB & Medido con \texttt{data\_length + index\_length}. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/01\_inventario\_origen.txt}.}
+\end{table}
+
+La ausencia de objetos \texttt{SEQUENCE} no implica que el destino carezca de
+generadores de identificadores: las 8 columnas \texttt{AUTO\_INCREMENT} se
+convierten en identidades \texttt{BIGINT GENERATED ALWAYS AS IDENTITY} y sus
+valores se reajustan con \texttt{setval} al final de la carga, sin inventar
+objetos nuevos ni perder los identificadores originales. {\hyphenation{OVERRIDING}%
+La documentación oficial de PostgreSQL 16 describe la identidad así: «In an
+INSERT command, if ALWAYS is selected, a user-specified value is only accepted
+if the INSERT statement specifies OVERRIDING SYSTEM VALUE»
+\citep[apartado «GENERATED ALWAYS AS IDENTITY»]{postgresql2024}.}
+
+\capturaAPA{fig:cap-inventario}{Inventario de objetos del sistema de origen}%
+  {captura-inventario-objetos.png}%
+  {Salida de \texttt{scripts/01\_audit\_origin.sh} con tablas, vistas, índices, usuarios y privilegios.}
+
+La salida completa del inventario se presenta en el Anexo~C
+(Figuras~\ref{fig:anexo-inventario-1} y~\ref{fig:anexo-inventario-2}).
+
+\subsection{Diagrama de clases de la base de datos origen}
+
+La Figura~\ref{fig:diagrama-clases-origen} presenta el diagrama de clases de
+la base de datos origen. Cada clase representa una tabla de
+\texttt{coop\_horizonte\_legacy}, con sus atributos y tipos de datos de
+MySQL 5.7. Las asociaciones reflejan las relaciones lógicas del negocio: un
+socio tiene muchas cuentas de ahorro y muchas solicitudes de crédito; una
+solicitud aprobada genera un préstamo; un préstamo tiene muchas cuotas de
+amortización; y las transacciones referencian un socio, una cuenta o un
+préstamo según el tipo de movimiento. Estas relaciones son lógicas, inferidas
+del modelo de datos y del código de la aplicación: como se documenta en la
+Sección~\ref{sec:riesgos}, el origen no declara claves foráneas en el motor,
+y solo se formalizan como restricciones \texttt{FOREIGN KEY} en el destino.
+
+\noindent\begin{minipage}{\linewidth}
+\capturaAPA{fig:diagrama-clases-origen}{Diagrama de clases de la base de datos origen}%
+  {diagrama-clases-origen.png}%
+  {Elaboración propia con base en \texttt{src/origin/01\_schema\_origin.sql}.}
+\end{minipage}
+
+\section{Inventario de datos y volumen}
+
+El conjunto de datos fue generado de forma determinista con una semilla fija
+(\texttt{seed=42}) para que cualquier integrante obtenga exactamente los
+mismos valores. La Tabla~\ref{tab:conteos-origen} presenta los conteos
+exactos. Destacan los 55 socios, las 66 cuentas de ahorro (algunos socios
+tienen dos cuentas), las 50 solicitudes de crédito, los 32 préstamos
+aprobados, las 516 cuotas de amortización y las 740 transacciones. El total
+es de 1\,469 filas.
+
+\begin{table}[H]
+  \centering
+  \caption{Conteo de filas en el sistema de origen}
+  \label{tab:conteos-origen}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{6.2cm}R{3.0cm}L{5.0cm}@{}}
+        \toprule
+        \textbf{Tabla} & \textbf{Filas} & \textbf{Propósito} \\
+        \midrule
+        \texttt{sucursales} & 5 & Catálogo de agencias. \\
+        \texttt{socios} & 55 & Datos personales y estado del socio. \\
+        \texttt{cuentas\_ahorro} & 66 & Cuentas y saldos iniciales. \\
+        \texttt{tipos\_credito} & 5 & Productos de crédito. \\
+        \texttt{solicitudes\_credito} & 50 & Solicitudes y su estado. \\
+        \texttt{prestamos} & 32 & Créditos desembolsados. \\
+        \texttt{cuotas\_amortizacion} & 516 & Plan de pagos. \\
+        \texttt{transacciones} & 740 & Depósitos, retiros, pagos y desembolsos. \\
+        \midrule
+        \textbf{Total} & \textbf{1\,469} & 8 tablas de negocio. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/01\_inventario\_origen.txt} y \texttt{evidence/02\_ejecucion\_migracion.txt}.}
+\end{table}
+
+La distribución de filas no es arbitraria: las transacciones se derivan de
+los desembolsos, los pagos de cuotas y los movimientos de las cuentas; las
+cuotas se generan a partir de cada préstamo; y los préstamos solo existen
+para solicitudes aprobadas. Esa coherencia es la que permite verificar la
+integridad referencial después de la migración. El \emph{script}
+\texttt{src/origin/generate\_seed.py} documenta las reglas de generación y
+puede regenerar el archivo \texttt{02\_seed\_origin.sql} en cualquier momento.
+
+\section{Riesgos de seguridad detectados}
+\label{sec:riesgos}
+
+\subsection{Privilegios excesivos del usuario de aplicación}
+
+El hallazgo más grave es que \texttt{app\_legacy\_user} tiene
+\texttt{GRANT ALL PRIVILEGES} sobre \texttt{coop\_horizonte\_legacy.*}. En
+MySQL, \texttt{ALL} incluye \texttt{SELECT}, \texttt{INSERT}, \texttt{UPDATE},
+\texttt{DELETE}, \texttt{CREATE}, \texttt{DROP}, \texttt{ALTER},
+\texttt{INDEX}, \texttt{REFERENCES}, \texttt{CREATE TEMPORARY TABLES},
+\texttt{LOCK TABLES}, \texttt{EXECUTE}, \texttt{CREATE VIEW},
+\texttt{SHOW VIEW}, \texttt{CREATE ROUTINE}, \texttt{ALTER ROUTINE},
+\texttt{EVENT} y \texttt{TRIGGER}. La aplicación no necesita DDL ni
+\texttt{DROP}; sin embargo, si es comprometida, el atacante puede borrar
+tablas, alterar el esquema o crear disparadores maliciosos. La mitigación es
+separar la operación de la administración y otorgar solo DML sobre las tablas
+necesarias, que es exactamente lo que hace el rol \texttt{app\_core\_rw} en
+el destino.
+
+\capturaAPA{fig:cap-privilegios}{Privilegios del usuario de aplicación en el origen}%
+  {captura-privilegios-app.png}%
+  {Salida de \texttt{SHOW GRANTS FOR 'app\_legacy\_user'@'\%';} con \texttt{GRANT ALL PRIVILEGES}.}
+
+\subsection{Transporte sin cifrado}
+
+MySQL 5.7 puede habilitar TLS, pero la instalación analizada no lo exige. La
+aplicación se conecta sin \texttt{REQUIRE SSL}, de modo que las credenciales
+y los datos pueden ser interceptados en la red interna. En el destino se
+exige \texttt{hostssl} para todas las conexiones TCP y se rechaza cualquier
+intento sin cifrado, como se demuestra en la
+Sección~\ref{sec:evidencias-hardening}.
+
+\subsection{Ausencia de integridad referencial}
+
+El esquema no declara claves foráneas. La aplicación es la única responsable
+de que \texttt{cuentas\_ahorro.socio\_id} apunte a un socio existente, que
+\texttt{prestamos.solicitud\_id} corresponda a una solicitud aprobada y que
+\texttt{cuotas\_amortizacion.prestamo\_id} pertenezca a un préstamo. Cualquier
+error de código, carga manual o borrado accidental puede producir huérfanos.
+En el destino se añadieron 9 claves foráneas y se verificó que no existieran
+huérfanos después de la carga.
+
+\subsection{Auditoría insuficiente}
+
+No hay registro sistemático de conexiones, desconexiones ni cambios de
+estructura. Si ocurriera un acceso no autorizado o un cambio de esquema, la
+cooperativa no tendría evidencia para reconstruir los hechos. El destino
+habilita \texttt{log\_connections}, \texttt{log\_disconnections} y
+\texttt{log\_statement = 'ddl'}, y además separa los roles para que la cuenta
+de auditoría no pueda modificar datos.
+
+\subsection{Respaldo sin cifrado y sin prueba de restauración}
+
+Un respaldo en texto claro es tan sensible como la base original. Si el
+archivo se copia a un medio externo, se comparte por error o se almacena en
+un servidor comprometido, los datos personales y financieros quedan
+expuestos. El proyecto genera el respaldo del destino con
+\texttt{pg\_dump -Fc} y lo cifra con AES-256-CBC y PBKDF2; además, descifra y
+restaura el respaldo en una base temporal para comprobar que es utilizable.
+Un respaldo que nunca se restaura no es un respaldo: es una esperanza.
+
+\subsection{Fin de vida del motor}
+
+MySQL 5.7 dejó de recibir parches oficiales en octubre de 2023. La
+cooperativa no puede depender de un motor sin soporte para custodiar datos
+financieros. PostgreSQL 16 tiene soporte activo, una comunidad amplia y un
+ciclo de versiones predecible \citep{postgresql2024}. La migración reduce el
+riesgo de vulnerabilidades no corregidas y facilita la aplicación de futuras
+actualizaciones.
+
+\section{Matriz de incompatibilidades y reglas de conversión}
+
+La migración heterogénea no consiste en copiar valores: exige interpretar la
+semántica de cada tipo. La Tabla~\ref{tab:incompatibilidades} presenta las
+incompatibilidades reales encontradas, su frecuencia y la regla aplicada en el
+destino. Las decisiones se justifican con la documentación oficial de
+PostgreSQL \citep{postgresql2024} y con los principios de diseño relacional
+\citep{elmasri2016,silberschatz2020}.
+
+\begin{table}[H]
+  \centering
+  \caption{Matriz de incompatibilidades MySQL 5.7--PostgreSQL 16}
+  \label{tab:incompatibilidades}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{2.7cm}L{3.3cm}L{3.6cm}L{5.2cm}@{}}
+        \toprule
+        \textbf{MySQL 5.7} & \textbf{Columnas reales} & \textbf{PostgreSQL 16} & \textbf{Regla de conversión} \\
+        \midrule
+        \texttt{TINYINT(1)} & 4 columnas: \texttt{estatus} en \texttt{sucursales}, \texttt{socios} y \texttt{cuentas\_ahorro}; \texttt{pagado\_total} en \texttt{prestamos}. & \texttt{BOOLEAN} & Convertir 0 a \texttt{FALSE} y cualquier valor distinto de 0 a \texttt{TRUE}. Validar que no existan valores intermedios. \\
+        \texttt{ENUM} & 7 columnas: estados de socios, tipos de crédito, solicitudes, préstamos, cuotas y transacciones. & \texttt{VARCHAR(n)} + \texttt{CHECK} & Reemplazar el tipo por texto con una restricción \texttt{CHECK ... IN (...)} que conserve el dominio. \\
+        \texttt{DATETIME} & 10 columnas: fechas de creación, apertura, cierre, solicitud, aprobación, desembolso, pago y transacción. & \texttt{TIMESTAMPTZ} & Interpretar el valor original en \texttt{America/La\_Paz} y almacenarlo como instante con zona horaria. \\
+        \texttt{INT UNSIGNED AUTO\_INCREMENT} & 8 claves primarias. & \texttt{BIGINT GENERATED ALWAYS AS IDENTITY} & Crear identidad, insertar los IDs originales con \texttt{OVERRIDING SYSTEM VALUE} y reajustar la secuencia con \texttt{setval}. \\
+        \texttt{utf8\_general\_ci} & Base y tablas. & UTF-8 nativo & Usar la codificación UTF-8 del clúster; no se requiere collation por columna. \\
+        \texttt{UNIQUE KEY} & 3 columnas únicas: \texttt{numero\_identificacion}, \texttt{num\_cuenta}, \texttt{solicitud\_id}. & \texttt{UNIQUE} & Conservar la restricción y crear el índice único asociado. \\
+        Sin \texttt{FOREIGN KEY} & 0 restricciones en el origen. & 9 \texttt{FOREIGN KEY} & Declarar las relaciones y validar que no existan huérfanos antes de la carga. \\
+        \texttt{DECIMAL(12,2)} & Montos, saldos, tasas y cuotas. & \texttt{NUMERIC(12,2)} & Mantener precisión y escala; añadir \texttt{CHECK} para montos no negativos. \\
+        \texttt{TEXT} & Descripciones, observaciones y direcciones. & \texttt{TEXT} & Conservar sin cambios; PostgreSQL no requiere prefijos de longitud. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/01\_inventario\_origen.txt} y \texttt{src/target/01\_schema\_target.sql}.}
+\end{table}
+
+\subsection{Incompatibilidades de sintaxis y adaptación}
+
+Además de los tipos, la sintaxis de ambos motores difiere. La adaptación no
+se resolvió con una conversión automática: se revisaron las sentencias del
+origen y se aplicaron las equivalencias de la
+Tabla~\ref{tab:incompatibilidades-sintaxis}.
+
+\begin{table}[H]
+  \centering
+  \caption{Incompatibilidades de sintaxis MySQL 5.7--PostgreSQL 16}
+  \label{tab:incompatibilidades-sintaxis}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{4.0cm}L{4.3cm}L{6.5cm}@{}}
+        \toprule
+        \textbf{MySQL 5.7} & \textbf{PostgreSQL 16} & \textbf{Decisión} \\
+        \midrule
+        \code{ENGINE=InnoDB}, \code{CHARSET}, \code{COLLATE} & Sintaxis nativa & Se omiten; se usa la codificación UTF-8 del clúster. \\
+        \code{AUTO\_INCREMENT} & \code{GENERATED ALWAYS AS IDENTITY} & Se conservan los IDs y se reajusta con \texttt{setval}. \\
+        \code{GRANT ALL ON db.*} con comillas invertidas & Roles y \texttt{GRANT} sobre el esquema & Se separan \texttt{admin\_dba}, \texttt{app\_core\_rw} y \texttt{auditor\_ro}. \\
+        \code{SHOW GRANTS} & \texttt{pg\_roles} y \texttt{has\_table\_privilege} & Los privilegios se auditan por catálogo. \\
+        \code{IFNULL} & \code{COALESCE} & Se adopta la función estándar SQL. \\
+        \code{GROUP\_CONCAT} & \code{string\_agg} & Se usa en las vistas de reporte. \\
+        \code{ON DUPLICATE KEY UPDATE} & \code{INSERT ... ON CONFLICT} & Disponible para cargas tipo \emph{upsert}. \\
+        Comentarios con \texttt{\#} & Comentarios con \texttt{-{}-} & Se convierten al adaptar los scripts. \\
+        Comillas invertidas para identificadores & Comillas dobles o sin delimitar & Se prefiere SQL estándar. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con base en \texttt{src/origin/01\_schema\_origin.sql} y \texttt{src/target/01\_schema\_target.sql}.}
+\end{table}
+
+Estas diferencias explican por qué el DDL y el ETL se escribieron
+explícitamente en lugar de generarse con una herramienta genérica.
+
+\subsection{Booleanos: de \texttt{TINYINT(1)} a \texttt{BOOLEAN}}
+
+MySQL no tiene un tipo booleano nativo: \texttt{BOOLEAN} es un alias de
+\texttt{TINYINT(1)} y acepta cualquier valor de 8 bits. PostgreSQL tiene
+\texttt{BOOLEAN} con valores \texttt{TRUE}, \texttt{FALSE} y \texttt{NULL}.
+La conversión aplicada en el ETL es explícita: \texttt{bool(int(valor))}. Si
+el origen contuviera un 2 o un -1, el ETL lo interpretaría como verdadero; por
+eso se recomienda una validación previa en producción. En el conjunto de
+datos analizado todos los valores son 0 o 1.
+
+\subsection{Estados: de \texttt{ENUM} a \texttt{VARCHAR} con \texttt{CHECK}}
+
+\texttt{ENUM} es una enumeración almacenada como entero interno. Su principal
+ventaja es la validación en el motor; su principal desventaja es que añadir un
+valor requiere \texttt{ALTER TABLE} y que el orden interno puede cambiar si se
+reordena la lista. En PostgreSQL se optó por \texttt{VARCHAR(10)} con una
+restricción \texttt{CHECK}. Así se conserva la validación, se facilita la
+lectura y se evita depender de un tipo propietario. Las restricciones se
+nombraron de forma descriptiva para que los errores sean comprensibles.
+
+\subsection{Fechas: de \texttt{DATETIME} a \texttt{TIMESTAMPTZ}}
+
+\texttt{DATETIME} almacena una fecha y hora sin zona. Eso significa que el
+valor \texttt{2026-11-20 08:09:40} no indica si ocurrió en La Paz, en UTC o en
+otra zona. Para una entidad financiera, la ambigüedad es inaceptable: un pago
+registrado a las 23:30 puede pertenecer a un día contable distinto según la
+zona. La migración interpreta cada valor en \texttt{America/La\_Paz} y lo
+almacena como \texttt{TIMESTAMPTZ}. El ETL usa \texttt{ZoneInfo} de Python
+para asignar la zona antes de insertar, y el servidor configura
+\texttt{timezone = 'America/La\_Paz'} para que las consultas y los reportes
+se muestren en la hora local.
+
+\subsection{Identificadores: de \texttt{AUTO\_INCREMENT} a identidad}
+
+MySQL usa \texttt{AUTO\_INCREMENT} con enteros sin signo. PostgreSQL 16 usa
+identidades (\texttt{GENERATED ALWAYS AS IDENTITY}), que son estándar SQL y
+permiten controlar el ciclo de vida de la secuencia. El ETL inserta los IDs
+originales con \texttt{OVERRIDING SYSTEM VALUE} para no romper las referencias
+y, al final, ejecuta \texttt{setval} sobre cada secuencia. Sin ese ajuste, el
+primer \texttt{INSERT} nuevo intentaría usar un ID ya ocupado y fallaría.
+
+\subsection{Collation y codificación}
+
+\texttt{utf8\_general\_ci} es la collation de \texttt{utf8mb3}, una
+codificación de tres bytes que no puede representar todos los caracteres
+Unicode (por ejemplo, emojis o ciertos símbolos). PostgreSQL usa UTF-8 nativo
+y una collation del clúster. La migración no requiere conversión de datos
+porque los valores del origen son ASCII y español; sin embargo, el cambio
+elimina la limitación y prepara la base para nombres y direcciones con
+caracteres adicionales.
+
+\subsection{Integridad referencial}
+
+La ausencia de claves foráneas en el origen obligó a validar la integridad
+antes de declararlas en el destino. El ETL carga en orden jerárquico
+(\texttt{sucursales}, \texttt{tipos\_credito}, \texttt{socios},
+\texttt{cuentas\_ahorro}, \texttt{solicitudes\_credito}, \texttt{prestamos},
+\texttt{cuotas\_amortizacion}, \texttt{transacciones}) y luego las pruebas
+consultan cada relación con \texttt{LEFT JOIN} para contar huérfanos. El
+resultado fue cero en las 9 relaciones, como se muestra en el
+Capítulo~IV.

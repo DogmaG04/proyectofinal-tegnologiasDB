@@ -1,0 +1,525 @@
+% ============================================================================
+%  CAPÍTULO III: DESARROLLO DEL TRABAJO (parte 1)
+% ============================================================================
+
+\section{Plan de migración}
+
+\subsection{Estrategia seleccionada}
+
+La selección de estrategia dependió de tres variables: el volumen (0.28 MB y
+1\,469 filas), la ventana de mantenimiento disponible y la criticidad del
+negocio. Se evaluaron tres alternativas. La primera, migración \emph{big bang}
+con corte controlado, consiste en congelar escrituras en el origen, cargar los
+datos a un schema de staging (\texttt{stg}) con pgloader, validar con
+\emph{precheck}, aplicar en una sola transacción con rollback garantizado, y
+cambiar la cadena de conexión. La segunda, replicación continua con
+\emph{Change Data Capture} (CDC), mantiene ambos motores sincronizados y
+reduce el tiempo de inactividad, pero requiere herramientas adicionales,
+monitoreo permanente y un esfuerzo de ingeniería desproporcionado para el
+volumen actual. La tercera, migración por lotes con doble escritura, exige
+modificar la aplicación y convivir con dos fuentes de verdad durante semanas.
+
+La Tabla~\ref{tab:estrategias} compara las alternativas. Para este proyecto se
+eligió el corte controlado con staging porque el volumen permite copiar y
+verificar en segundos, el respaldo y la restauración están probados, y el
+rollback es transaccional: si el \emph{precheck} o el \emph{postcheck} falla,
+se conserva el origen y el destino no sufre modificaciones parciales. La
+ventana de mantenimiento estimada es de 30 a 60 minutos, muy por debajo de las
+4 horas que justificarían CDC.
+
+\begin{table}[H]
+  \centering
+  \caption{Comparación de estrategias de migración}
+  \label{tab:estrategias}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{3.2cm}L{3.4cm}L{3.4cm}L{4.2cm}@{}}
+        \toprule
+        \textbf{Estrategia} & \textbf{Ventaja} & \textbf{Desventaja} & \textbf{Decisión} \\
+        \midrule
+        \emph{Big bang} controlado con staging & Simple, verificable, rollback transaccional; pgloader + precheck/postcheck. & Requiere ventana de inactividad y congelamiento de escrituras. & \textbf{Seleccionada}: el volumen y la criticidad lo permiten. \\
+        CDC con replicación & Inactividad mínima; útil para volúmenes grandes. & Complejidad operativa y de monitoreo; herramientas adicionales. & Descartada para esta fase. \\
+        Doble escritura & Transición gradual. & Cambios en la aplicación; riesgo de divergencia. & Descartada: exige modificar el código. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+\subsection{Fases y cronograma}
+
+El plan se organizó en diez fases. La Tabla~\ref{tab:fases} indica el
+objetivo, las actividades principales, el entregable y la duración estimada.
+Las fases 1 a 10 se ejecutaron en el laboratorio; las fases de validación se
+repitieron hasta obtener 75 pruebas en \texttt{PASS}.
+
+\begin{table}[H]
+  \centering
+  \caption{Fases del plan de migración}
+  \label{tab:fases}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}C{1.0cm}L{2.9cm}L{6.2cm}L{3.4cm}C{1.3cm}@{}}
+        \toprule
+        \textbf{Fase} & \textbf{Nombre} & \textbf{Actividades} & \textbf{Entregable} & \textbf{Duración} \\
+        \midrule
+        1 & Congelamiento & Detener escrituras en MySQL; validar conectividad origen--destino. & Entorno \emph{healthy} congelado. & 5 min \\
+        2 & Respaldo origen & \texttt{mysqldump --single-transaction} del origen. & \texttt{backups/origin\_*.sql.gz}. & 10 min \\
+        3 & Staging & \texttt{00\_prepare\_staging.sql} crea schema \texttt{stg}. & Schema \texttt{stg} listo. & 5 min \\
+        4 & Carga pgloader & pgloader carga 8 tablas a \texttt{stg} (sin índices, FK, secuencias). & Datos en \texttt{stg}. & 10 min \\
+        5 & Conteo staging & Conteos origen vs \texttt{stg}. & Conteos coincidentes. & 5 min \\
+        6 & Precheck & \texttt{10\_precheck.sql} valida nulos, ENUM, huérfanos, rangos, fechas cero. Aborta si falla. & Validación superada. & 10 min \\
+        7 & Carga transaccional & \texttt{20\_load.sql} + \texttt{30\_postcheck.sql} + \texttt{35\_sequences.sql} en una transacción (\texttt{ROLLBACK} si falla). & Datos en \texttt{public} verificados. & 10 min \\
+        8 & Estadísticas & \texttt{40\_analyze.sql} como \texttt{postgres} por socket local. & Planificador actualizado. & 5 min \\
+        9 & Limpieza & \texttt{50\_cleanup.sql} elimina schema \texttt{stg}. & Entorno limpio. & 5 min \\
+        10 & Respaldo destino y restauración & \texttt{pg\_dump -Fc} + AES-256-CBC; prueba de restauración con 55 socios. & Respaldo cifrado verificado. & 15 min \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+\subsection{Plan de contingencia y reversión}
+
+El plan de contingencia se diseñó antes de ejecutar la migración. La lógica es
+simple: el origen es la fuente de verdad hasta que el destino pasa todas las
+pruebas; si algo falla, se conserva el origen y se restaura el destino. La
+Tabla~\ref{tab:contingencia} define los disparadores, las acciones y los
+responsables. El objetivo de tiempo de recuperación (RTO) es de 30 minutos y
+el objetivo de punto de recuperación (RPO) es de 0 minutos para los datos
+migrados, porque el respaldo se toma inmediatamente antes del corte.
+
+\begin{table}[H]
+  \centering
+  \caption{Plan de contingencia y reversión}
+  \label{tab:contingencia}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{3.5cm}L{6.6cm}L{4.6cm}@{}}
+        \toprule
+        \textbf{Disparador} & \textbf{Acción} & \textbf{Responsable} \\
+        \midrule
+        Conteos origen vs \texttt{stg} no coinciden & Detener, revisar la carga pgloader, restaurar el destino desde el respaldo y repetir. & DBA / ETL \\
+        \texttt{PRECHECK FALLIDO} & Abortar antes de tocar \texttt{public}; corregir la validación fallida (nulos, ENUM, huérfanos, rangos, fechas cero) y repetir desde la fase de carga. & DBA \\
+        Error en transacción única & \texttt{ROLLBACK} automático; el destino no sufre modificaciones parciales. Revisar el error en \texttt{20\_load.sql} o \texttt{30\_postcheck.sql} y repetir. & DBA \\
+        Clave foránea violada & Identificar el huérfano, corregir la causa en el origen o en la transformación, repetir la carga. & DBA \\
+        Falla de conexión TLS & Revisar certificados, \texttt{pg\_hba} y \texttt{sslrootcert}; no continuar sin cifrado. & Seguridad \\
+        Error de secuencia & Ejecutar \texttt{setval} con el máximo ID y probar un \texttt{INSERT} nuevo. & DBA \\
+        Pérdida de datos & Restaurar el respaldo cifrado, validar 55 socios y 1\,469 filas, repetir la migración. & DBA \\
+        Incidente de seguridad & Aislar el contenedor, revocar credenciales, revisar logs y notificar. & Seguridad / TI \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+Los criterios de aceptación fueron: (a) 100\,\% de las filas migradas y
+verificadas; (b) cero huérfanos en las 9 relaciones; (c) 75 pruebas en
+\texttt{PASS}; (d) conexiones sin SSL rechazadas; (e) \texttt{auditor\_ro} sin
+acceso a tablas sensibles; (f) respaldo cifrado restaurado con 55 socios; y
+(g) entorno levantado desde cero con un solo comando. Si cualquiera de estos
+criterios falla, la migración no se considera aceptada.
+
+\section{Diseño del esquema destino}
+
+\subsection{Principios de diseño}
+
+El esquema destino conserva los nombres de las tablas y columnas del origen
+para reducir el impacto en la aplicación, pero cambia los tipos y añade
+restricciones. Se aplicaron cinco principios. Primero, usar tipos nativos de
+PostgreSQL en lugar de emular los de MySQL. Segundo, declarar la integridad
+referencial en el motor. Tercero, mantener la precisión decimal de los montos.
+Cuarto, indexar las columnas usadas en reportes y claves foráneas. Quinto,
+exponer los datos sensibles solo a través de vistas controladas.
+
+La Figura~\ref{fig:modelo-datos} muestra el modelo relacional simplificado.
+Las relaciones principales son: un socio tiene muchas cuentas y muchas
+solicitudes; una solicitud aprobada genera un préstamo; un préstamo tiene
+muchas cuotas; y las transacciones referencian un socio, una cuenta o un
+préstamo según el tipo de movimiento.
+
+\figuraAPA{fig:modelo-datos}{Modelo relacional simplificado del destino}{%
+  \begin{tikzpicture}[
+      ent/.style={draw, rounded corners, minimum width=2.7cm,
+                  minimum height=0.85cm, align=center, font=\scriptsize,
+                  fill=blue!4},
+      linea/.style={-Stealth, thick, black!70},
+      etiqueta/.style={font=\tiny, fill=white, inner sep=1pt}]
+    \node[ent] (suc) at (0,0) {\texttt{sucursales}};
+    \node[ent] (soc) at (3.4,0) {\texttt{socios}};
+    \node[ent] (cta) at (6.8,0) {\texttt{cuentas\_ahorro}};
+    \node[ent] (tx)  at (10.2,0) {\texttt{transacciones}};
+    \node[ent] (tip) at (0,-2.6) {\texttt{tipos\_credito}};
+    \node[ent] (sol) at (3.4,-2.6) {\texttt{solicitudes\_credito}};
+    \node[ent] (pre) at (6.8,-2.6) {\texttt{prestamos}};
+    \node[ent] (cuo) at (10.2,-2.6) {\texttt{cuotas\_amortizacion}};
+
+    \draw[linea] (soc) -- node[etiqueta,above]{1:N} (cta);
+    \draw[linea] (soc) -- node[etiqueta,right]{1:N} (sol);
+    \draw[linea] (tip) -- node[etiqueta,above]{1:N} (sol);
+    \draw[linea] (sol) -- node[etiqueta,above]{1:1} (pre);
+    \draw[linea] (pre) -- node[etiqueta,above]{1:N} (cuo);
+    \draw[linea] (cta) -- node[etiqueta,above]{1:N} (tx);
+    \draw[linea] (pre) to[bend left=18] node[etiqueta,right]{1:N} (tx);
+    \draw[linea, dashed] (soc) to[bend left=12] node[etiqueta,left]{1:N} (pre);
+  \end{tikzpicture}%
+}{Elaboración propia con base en \texttt{src/target/01\_schema\_target.sql}.}
+
+\subsection{Tablas, claves y restricciones}
+
+La Tabla~\ref{tab:tablas-destino} describe las 8 tablas, su clave primaria,
+sus claves foráneas y las restricciones adicionales. Todas las claves
+primarias usan identidades \texttt{BIGINT}. Las claves foráneas tienen
+políticas explícitas: \texttt{ON DELETE CASCADE} en cuotas (si se elimina un
+préstamo, sus cuotas no tienen sentido) y \texttt{ON DELETE SET NULL} en
+transacciones (el historial debe conservarse aunque se elimine la referencia).
+
+\begin{table}[H]
+  \centering
+  \caption{Tablas y restricciones del esquema destino}
+  \label{tab:tablas-destino}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{3.0cm}L{3.2cm}L{4.0cm}L{4.2cm}@{}}
+        \toprule
+        \textbf{Tabla} & \textbf{Clave primaria} & \textbf{Claves foráneas} & \textbf{Restricciones} \\
+        \midrule
+        \texttt{sucursales} & \texttt{id} & --- & \texttt{estatus BOOLEAN}. \\
+        \texttt{socios} & \texttt{id} & --- & \texttt{UNIQUE(numero\_identificacion)}; \texttt{CHECK(genero)}; \texttt{CHECK(estado)}. \\
+        \texttt{cuentas\_ahorro} & \texttt{id} & \texttt{socio\_id} $\rightarrow$ \texttt{socios} & \texttt{UNIQUE(num\_cuenta)}; saldo y tasa no negativos. \\
+        \texttt{tipos\_credito} & \texttt{id} & --- & \texttt{CHECK(estado)}; monto y plazo positivos. \\
+        \texttt{solicitudes\_credito} & \texttt{id} & \texttt{socio\_id}, \texttt{tipo\_credito\_id} & \texttt{CHECK(status)}; monto y plazo positivos. \\
+        \texttt{prestamos} & \texttt{id} & \texttt{solicitud\_id}, \texttt{socio\_id} & \texttt{UNIQUE(solicitud\_id)}; \texttt{CHECK(estado)}. \\
+        \texttt{cuotas\_amortizacion} & \texttt{id} & \texttt{prestamo\_id} & \texttt{UNIQUE(prestamo\_id, numero\_cuota)}; \texttt{CHECK(estatus)}. \\
+        \texttt{transacciones} & \texttt{id} & \texttt{socio\_id}, \texttt{cuenta\_ahorro\_id}, \texttt{prestamo\_id} & \texttt{CHECK(tipo)}; monto positivo. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{src/target/01\_schema\_target.sql}.}
+\end{table}
+
+El fragmento de DDL de la Tabla~\ref{tab:tablas-destino} se implementó en
+\texttt{src/target/01\_schema\_target.sql}. Se reproducen las definiciones de
+\texttt{socios}, \texttt{prestamos} y \texttt{transacciones} para mostrar el
+estilo.
+
+\begin{lstlisting}[language=SQL,caption={Definiciones representativas del esquema destino},label={lst:ddl-destino}]
+CREATE TABLE socios (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  nombre_completo VARCHAR(150) NOT NULL,
+  numero_identificacion VARCHAR(20) UNIQUE,
+  fecha_nacimiento DATE,
+  genero VARCHAR(1) NOT NULL DEFAULT 'M'
+    CHECK (genero IN ('M', 'F', 'O')),
+  estado VARCHAR(10) NOT NULL DEFAULT 'activo'
+    CHECK (estado IN ('activo', 'inactivo', 'suspendido')),
+  fecha_ingreso DATE NOT NULL,
+  telefono VARCHAR(20),
+  email VARCHAR(100),
+  direccion_residencia TEXT,
+  fecha_ultima_actualizacion TIMESTAMPTZ NOT NULL DEFAULT now(),
+  estatus BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE prestamos (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  solicitud_id BIGINT NOT NULL UNIQUE REFERENCES solicitudes_credito(id),
+  socio_id BIGINT NOT NULL REFERENCES socios(id),
+  monto_prestado NUMERIC(12,2) NOT NULL CHECK (monto_prestado > 0),
+  tasa_interes_anual NUMERIC(5,2) NOT NULL CHECK (tasa_interes_anual >= 0),
+  fecha_desembolso TIMESTAMPTZ NOT NULL,
+  fecha_fin_plazo DATE NOT NULL,
+  estado VARCHAR(10) NOT NULL DEFAULT 'activo'
+    CHECK (estado IN ('activo', 'pagado', 'moroso', 'cancelado')),
+  total_cuotas BIGINT NOT NULL CHECK (total_cuotas > 0),
+  pagado_total BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE transacciones (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tipo VARCHAR(15) NOT NULL
+    CHECK (tipo IN ('deposito', 'retiro', 'pago_cuota', 'desembolso', 'transferencia')),
+  socio_id BIGINT REFERENCES socios(id) ON DELETE SET NULL,
+  cuenta_ahorro_id BIGINT REFERENCES cuentas_ahorro(id) ON DELETE SET NULL,
+  prestamo_id BIGINT REFERENCES prestamos(id) ON DELETE SET NULL,
+  monto NUMERIC(12,2) NOT NULL CHECK (monto > 0),
+  fecha_transaccion TIMESTAMPTZ NOT NULL,
+  descripcion VARCHAR(255)
+);
+\end{lstlisting}
+
+\subsection{Índices}
+
+Se crearon 10 índices no únicos además de las claves primarias y las
+restricciones únicas. La selección se basó en las consultas de los reportes y
+en las columnas de join. La Tabla~\ref{tab:indices-destino} justifica cada
+índice. No se indexó todo: cada índice adicional consume espacio y ralentiza
+las escrituras. Se priorizaron las columnas con mayor selectividad y uso.
+
+\begin{table}[H]
+  \centering
+  \caption{Índices del esquema destino y su justificación}
+  \label{tab:indices-destino}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{4.2cm}L{3.2cm}L{7.0cm}@{}}
+        \toprule
+        \textbf{Índice} & \textbf{Tabla} & \textbf{Uso previsto} \\
+        \midrule
+        \texttt{idx\_socio\_estado} & \texttt{socios} & Filtrar socios activos, inactivos o suspendidos. \\
+        \texttt{idx\_cuenta\_ahorro\_socio} & \texttt{cuentas\_ahorro} & Reporte de saldos por socio. \\
+        \texttt{idx\_solicitud\_tipo} & \texttt{solicitudes\_credito} & Análisis por producto de crédito. \\
+        \texttt{idx\_solicitud\_socio} & \texttt{solicitudes\_credito} & Historial de solicitudes por socio. \\
+        \texttt{idx\_transaccion\_fecha} & \texttt{transacciones} & Reportes por rango de fechas. \\
+        \texttt{idx\_transaccion\_socio} & \texttt{transacciones} & Movimientos por socio. \\
+        \texttt{idx\_prestamo\_estado} & \texttt{prestamos} & Cartera por estado (incluye morosos). \\
+        \texttt{idx\_prestamo\_socio} & \texttt{prestamos} & Préstamos por socio. \\
+        \texttt{idx\_cuota\_prestamo} & \texttt{cuotas\_amortizacion} & Plan de pagos por préstamo. \\
+        \texttt{idx\_cuota\_estatus} & \texttt{cuotas\_amortizacion} & Cuotas pendientes, pagadas o atrasadas. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{src/target/01\_schema\_target.sql}.}
+\end{table}
+
+\subsection{Vistas}
+
+Se recrearon las dos vistas del origen y se añadió la vista de auditoría. La
+vista \texttt{vw\_cartera\_mora} conserva la lógica original: selecciona
+préstamos en estado \texttt{moroso}, cuenta sus cuotas y suma las atrasadas.
+La vista \texttt{vw\_resumen\_saldos\_socio} agrupa cuentas y préstamos por
+socio. La vista \texttt{vw\_socios\_audit} es nueva y aplica enmascaramiento.
+La Tabla~\ref{tab:vistas-destino} resume las tres.
+
+\begin{table}[H]
+  \centering
+  \caption{Vistas del esquema destino}
+  \label{tab:vistas-destino}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{4.4cm}L{2.4cm}L{7.4cm}@{}}
+        \toprule
+        \textbf{Vista} & \textbf{Tipo} & \textbf{Propósito} \\
+        \midrule
+        \texttt{vw\_cartera\_mora} & Reporte & Préstamos morosos, cuotas atrasadas y monto en mora. \\
+        \texttt{vw\_resumen\_saldos\_socio} & Reporte & Saldos activos y cerrados, cantidad de cuentas y préstamos. \\
+        \texttt{vw\_socios\_audit} & Auditoría & Datos de socio con CI/NIT, teléfono, correo y cuentas enmascarados. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{src/target/01\_schema\_target.sql} y \texttt{02\_hardening\_roles.sql}.}
+\end{table}
+
+\section{Implementación del ETL}
+
+\subsection{Arquitectura del proceso}
+
+El ETL se implementó en Python 3 con \texttt{pymysql} y \texttt{psycopg2},
+dentro del contenedor \texttt{coop\_horizonte\_migrador}, construido sobre la
+imagen \texttt{postgres:16}. El proceso abre una transacción de lectura en
+MySQL con \texttt{REPEATABLE READ} y \texttt{START TRANSACTION WITH CONSISTENT
+SNAPSHOT}, de modo que todas las tablas se leen desde el mismo punto en el
+tiempo. Luego trunca las tablas destino, carga en orden jerárquico, reajusta
+las secuencias y compara conteos. La Figura~\ref{fig:flujo-etl} resume el
+flujo.
+
+\figuraAPA{fig:flujo-etl}{Flujo del ETL y de la verificación}{%
+  \begin{tikzpicture}[
+      paso/.style={draw, rounded corners, minimum width=2.7cm,
+                   minimum height=0.9cm, align=center, font=\scriptsize,
+                   fill=green!4},
+      linea/.style={-Stealth, thick}]
+    \node[paso] (ext) {Extraer\\snapshot};
+    \node[paso, right=0.7cm of ext] (tr) {Transformar\\tipos};
+    \node[paso, right=0.7cm of tr] (load) {Cargar\\destino};
+    \node[paso, right=0.7cm of load] (seq) {Reajustar\\secuencias};
+    \node[paso, right=0.7cm of seq] (ver) {Verificar\\conteos};
+    \draw[linea] (ext) -- (tr);
+    \draw[linea] (tr) -- (load);
+    \draw[linea] (load) -- (seq);
+    \draw[linea] (seq) -- (ver);
+  \end{tikzpicture}%
+}{Elaboración propia con base en \texttt{src/migration/migrate.py}.}
+
+\subsection{Transformaciones aplicadas}
+
+La Tabla~\ref{tab:transformaciones} documenta las transformaciones del ETL.
+Cada una responde a una incompatibilidad identificada en el diagnóstico. La
+conversión de booleanos usa \texttt{bool(int(valor))}; la de fechas asigna
+\texttt{ZoneInfo("America/La\_Paz")}; la de identificadores conserva el valor
+original y lo inserta con \texttt{OVERRIDING SYSTEM VALUE}. Los valores
+\texttt{NULL} se preservan en todas las columnas.
+
+\begin{table}[H]
+  \centering
+  \caption{Transformaciones del ETL}
+  \label{tab:transformaciones}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{3.0cm}L{4.4cm}L{6.8cm}@{}}
+        \toprule
+        \textbf{Columna origen} & \textbf{Transformación} & \textbf{Justificación} \\
+        \midrule
+        \texttt{estatus}, \texttt{pagado\_total} & \texttt{bool(int(valor))} & \texttt{TINYINT(1)} $\rightarrow$ \texttt{BOOLEAN}. \\
+        \texttt{fecha\_*}, \texttt{fecha\_transaccion} & \texttt{valor.replace(tzinfo=America/La\_Paz)} & \texttt{DATETIME} $\rightarrow$ \texttt{TIMESTAMPTZ}. \\
+        \texttt{id} & \texttt{OVERRIDING SYSTEM VALUE} & Conservar referencias y evitar colisiones. \\
+        \texttt{estado}, \texttt{status}, \texttt{tipo} & Texto sin cambios; validación por \texttt{CHECK} & \texttt{ENUM} $\rightarrow$ \texttt{VARCHAR} + \texttt{CHECK}. \\
+        \texttt{monto}, \texttt{saldo}, \texttt{tasa} & \texttt{Decimal} sin redondeo adicional & Mantener precisión \texttt{NUMERIC(12,2)}. \\
+        \texttt{NULL} & Se conserva & No inventar valores ni aplicar defaults. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con base en \texttt{src/migration/migrate.py}.}
+\end{table}
+
+\subsection{Carga, idempotencia y verificación}
+
+La carga se hace tabla por tabla, en orden de dependencias. Antes de insertar,
+el ETL ejecuta \texttt{TRUNCATE} sobre las 8 tablas con \texttt{CASCADE}. No
+se usa \texttt{RESTART IDENTITY} porque \texttt{admin\_dba} no es propietario
+de las secuencias creadas por las identidades; en su lugar, al final se
+ejecuta \texttt{setval} con el máximo ID de cada tabla. Esa decisión surgió de
+un error real documentado en la bitácora
+(Sección~\ref{sec:bitacora}). La carga es idempotente: se puede repetir sin
+duplicar filas porque el \texttt{TRUNCATE} limpia el destino y el snapshot del
+origen es consistente.
+
+\begin{lstlisting}[language=Python,caption={Núcleo del ETL: transformación, carga y reajuste de secuencias},label={lst:etl}]
+for table, columns, datetime_cols, bool_cols in TABLE_SPECS:
+    mysql_cur.execute(f"SELECT {', '.join(columns)} FROM {table} ORDER BY id")
+    raw_rows = mysql_cur.fetchall()
+    rows = []
+    for raw in raw_rows:
+        rows.append(tuple(
+            transform(value, col in bool_cols, col in datetime_cols)
+            for col, value in zip(columns, raw)
+        ))
+    if rows:
+        insert_sql = (
+            f"INSERT INTO {table} ({', '.join(columns)}) "
+            f"OVERRIDING SYSTEM VALUE VALUES %s"
+        )
+        execute_values(pg_cur, insert_sql, rows, page_size=500)
+
+for table, _, _, _ in TABLE_SPECS:
+    pg_cur.execute(
+        f"SELECT setval(pg_get_serial_sequence(%s, 'id'), "
+        f"COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) FROM {table}",
+        (table,),
+    )
+\end{lstlisting}
+
+La verificación compara \texttt{COUNT(*)} en cada tabla del origen y del
+destino. Si alguna diferencia existe, el ETL hace \texttt{rollback} y devuelve
+código de salida 1. En la ejecución real, las 8 tablas coincidieron y el total
+fue 1\,469 filas. La Tabla~\ref{tab:ejecucion-etl} muestra los tiempos por
+tabla. La tabla más costosa fue \texttt{transacciones} (740 filas, 0.022 s),
+seguida de \texttt{cuotas\_amortizacion} (516 filas, 0.014 s). El tiempo total
+de carga fue inferior a 0.06 s, sin contar la conexión y la verificación.
+
+\begin{table}[H]
+  \centering
+  \caption{Tiempos de carga del ETL por tabla}
+  \label{tab:ejecucion-etl}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{6.4cm}R{2.4cm}R{3.0cm}@{}}
+        \toprule
+        \textbf{Tabla} & \textbf{Filas} & \textbf{Tiempo (s)} \\
+        \midrule
+        \texttt{tipos\_credito} & 5 & 0.003 \\
+        \texttt{sucursales} & 5 & 0.002 \\
+        \texttt{socios} & 55 & 0.003 \\
+        \texttt{cuentas\_ahorro} & 66 & 0.003 \\
+        \texttt{solicitudes\_credito} & 50 & 0.003 \\
+        \texttt{prestamos} & 32 & 0.002 \\
+        \texttt{cuotas\_amortizacion} & 516 & 0.014 \\
+        \texttt{transacciones} & 740 & 0.022 \\
+        \midrule
+        \textbf{Total} & \textbf{1\,469} & \textbf{0.052} \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/02\_ejecucion\_migracion.txt}.}
+\end{table}
+
+\section{Orquestación Docker y automatización}
+
+\subsection{Servicios y aislamiento}
+
+El archivo \texttt{docker-compose.yml} define tres servicios principales y un
+perfil de documentación. La Tabla~\ref{tab:servicios} describe cada uno. Los
+puertos se publican solo en \texttt{127.0.0.1}, de modo que la base no queda
+expuesta a la red local. Los datos persisten en volúmenes nombrados y los
+archivos de inicialización se montan como solo lectura.
+
+\begin{table}[H]
+  \centering
+  \caption{Servicios de Docker Compose}
+  \label{tab:servicios}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{2.8cm}L{3.0cm}L{4.2cm}L{4.4cm}@{}}
+        \toprule
+        \textbf{Servicio} & \textbf{Imagen} & \textbf{Función} & \textbf{Puerto / volumen} \\
+        \midrule
+        \texttt{db-origen} & \texttt{mysql:5.7} & Motor legacy con esquema y datos. & \texttt{127.0.0.1:3306}; \texttt{mysql\_data}. \\
+        \texttt{db-destino} & \texttt{postgres:16} & Motor destino endurecido. & \texttt{127.0.0.1:5432}; \texttt{postgres\_data}. \\
+        \texttt{migrador} & \texttt{postgres:16} + Python & ETL, respaldo y pruebas. & Sin puerto; red interna. \\
+        \texttt{docs} & \texttt{texlive/texlive} & Compilación del informe. & Perfil \texttt{docs}. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{docker-compose.yml}.}
+\end{table}
+
+Los servicios comparten la red \texttt{red\_cooperativa}. El migrador resuelve
+los nombres \texttt{db-origen} y \texttt{db-destino} por DNS interno de
+Docker, lo que evita direcciones IP fijas. El destino monta
+\texttt{postgresql.conf}, \texttt{pg\_hba.conf}, los certificados y los scripts
+de inicialización. El entrypoint copia los certificados a una ruta escribible,
+ajusta propietario y permisos, y delega en el entrypoint oficial de
+PostgreSQL. Esa pequeña capa fue necesaria porque el volumen de datos no
+permite escribir directamente en \texttt{/etc/postgresql}.
+
+\subsection{Scripts de automatización}
+
+La Tabla~\ref{tab:scripts} describe los cuatro scripts de soporte. Cada uno
+tiene una responsabilidad única y guarda su salida en \texttt{evidence/}. El
+script \texttt{lib.sh} centraliza funciones comunes: carga del \texttt{.env},
+espera de servicios \emph{healthy}, ejecución de \texttt{mysql} y
+\texttt{psql}, y conteos. Así se evita duplicar lógica y se facilita el
+mantenimiento.
+
+\begin{table}[H]
+  \centering
+  \caption{Scripts de automatización}
+  \label{tab:scripts}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{4.4cm}L{9.6cm}@{}}
+        \toprule
+        \textbf{Script} & \textbf{Responsabilidad} \\
+        \midrule
+        \texttt{scripts/lib.sh} & Funciones comunes: entorno, espera, consultas y conteos. \\
+        \texttt{scripts/01\_audit\_origin.sh} & Inventario, tamaño, objetos, usuarios, privilegios e incompatibilidades. \\
+        \texttt{scripts/02\_migrate\_and\_backup.sh} & Respaldo del origen, pgloader + SQL, respaldo cifrado y prueba de restauración. \\
+        \texttt{scripts/03\_verify\_all.sh} & 75 pruebas de hardening, roles, enmascaramiento, conteos, integridad, staging y secuencias. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+\subsection{Reproducibilidad}
+
+El entorno se levanta con \texttt{docker compose up -d --build}. La primera
+vez, MySQL ejecuta \texttt{01\_schema\_origin.sql} y
+\texttt{02\_seed\_origin.sql}; PostgreSQL ejecuta
+\texttt{01\_schema\_target.sql} y \texttt{02\_hardening\_roles.sql}. Los
+healthchecks esperan a que ambos motores estén listos antes de considerar el
+servicio disponible. Para repetir la migración desde cero se ejecuta
+\texttt{docker compose down -v} y se vuelve a levantar; los volúmenes se
+recrean y los datos se generan de nuevo con la misma semilla. Esa
+reproducibilidad es la base de la confianza: cualquier integrante puede
+verificar los mismos resultados sin depender de una máquina específica.

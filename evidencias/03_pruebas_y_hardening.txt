@@ -1,0 +1,206 @@
+============================================================
+PRUEBAS DE MIGRACION Y HARDENING - PostgreSQL 16
+Cooperativa de Ahorro y Credito Horizonte PyME S.R.L.
+Generado: 2026-11-20 08:09:54 -04
+============================================================
+
+[2026-11-20 08:09:54] Esperando servicios ...
+[2026-11-20 08:09:54] Servicio db-destino healthy
+[2026-11-20 08:09:54] Servicio db-origen healthy
+== 1. Parametros de seguridad activos ==
+PASS  SHOW ssl                                                   (valor=on)
+PASS  SHOW password_encryption                                   (valor=scram-sha-256)
+PASS  SHOW log_connections                                       (valor=on)
+PASS  SHOW log_disconnections                                    (valor=on)
+PASS  SHOW log_statement                                         (valor=ddl)
+
+== 2. Reglas efectivas de pg_hba.conf ==
+ line_number |  type   |       database        |   user_name   | address |  auth_method  
+-------------+---------+-----------------------+---------------+---------+---------------
+           9 | local   | {all}                 | {all}         |         | peer
+          10 | local   | {postgres}            | {all}         |         | peer
+          12 | hostssl | {coop_horizonte_core} | {admin_dba}   | 0.0.0.0 | scram-sha-256
+          13 | hostssl | {coop_horizonte_core} | {admin_dba}   | ::      | scram-sha-256
+          14 | hostssl | {coop_horizonte_core} | {app_core_rw} | 0.0.0.0 | scram-sha-256
+          15 | hostssl | {coop_horizonte_core} | {app_core_rw} | ::      | scram-sha-256
+          16 | hostssl | {coop_horizonte_core} | {auditor_ro}  | 0.0.0.0 | scram-sha-256
+          17 | hostssl | {coop_horizonte_core} | {auditor_ro}  | ::      | scram-sha-256
+(8 rows)
+
+
+== 3. Rechazo de conexiones sin SSL ==
+PASS  Conexion TCP sin SSL rechazada
+PASS  Conexion TCP con SSL (sslmode=require)
+PASS  Conexion TCP con SSL verificado (sslmode=verify-ca)
+PASS  Acceso remoto directo de postgres rechazado
+
+== 4. Roles y privilegios de minimo privilegio ==
+   rolname   | rolsuper | rolcanlogin | rolcreatedb | rolcreaterole | rolinherit 
+-------------+----------+-------------+-------------+---------------+------------
+ admin_dba   | f        | t           | t           | t             | f
+ app_core_rw | f        | t           | f           | f             | f
+ auditor_ro  | f        | t           | f           | f             | f
+(3 rows)
+
+PASS  admin_dba no es superusuario                               (valor=f)
+PASS  app_core_rw no es superusuario                             (valor=f)
+PASS  app_core_rw puede iniciar sesion                           (valor=t)
+PASS  auditor_ro puede iniciar sesion                            (valor=t)
+PASS  PUBLIC sin CREATE en schema public                         (valor=f)
+PASS  auditor_ro con USAGE en public                             (valor=t)
+PASS  app_core_rw sin CREATE en public                           (valor=f)
+PASS  auditor_ro no lee socios                                   (valor=f)
+PASS  auditor_ro lee vw_socios_audit                             (valor=t)
+PASS  app_core_rw inserta en socios                              (valor=t)
+PASS  app_core_rw no trunca socios                               (valor=f)
+
+== 5. Enmascaramiento de datos sensibles ==
+****6-OR|****4877, ****9292
+****4-OR|****7514
+****3-LP|****4895, ****1669
+****2-SC|****8548, ****5186
+****1-CH|****0029, ****7335
+PASS  vw_socios_audit devuelve valores enmascarados
+PASS  No se detectaron identificadores completos en la vista
+PASS  auditor_ro no puede leer la tabla socios
+
+== 6. Conteos origen vs destino ==
+Tabla                      Origen  Destino Estado
+------------------------ -------- -------- ------
+sucursales                      5        5 OK
+socios                         55       55 OK
+cuentas_ahorro                 66       66 OK
+tipos_credito                   5        5 OK
+solicitudes_credito            50       50 OK
+prestamos                      32       32 OK
+cuotas_amortizacion           516      516 OK
+transacciones                 740      740 OK
+
+== 7. Integridad referencial ==
+PASS  Cantidad de claves foraneas en destino                     (valor=9)
+PASS  Sin huerfanos: cuentas_ahorro.socio_id -> socios.id        (valor=0)
+PASS  Sin huerfanos: solicitudes_credito.socio_id -> socios.id   (valor=0)
+PASS  Sin huerfanos: solicitudes_credito.tipo_credito_id -> tipos_credito.id (valor=0)
+PASS  Sin huerfanos: prestamos.solicitud_id -> solicitudes_credito.id (valor=0)
+PASS  Sin huerfanos: prestamos.socio_id -> socios.id             (valor=0)
+PASS  Sin huerfanos: cuotas_amortizacion.prestamo_id -> prestamos.id (valor=0)
+PASS  Sin huerfanos: transacciones.socio_id -> socios.id         (valor=0)
+PASS  Sin huerfanos: transacciones.cuenta_ahorro_id -> cuentas_ahorro.id (valor=0)
+PASS  Sin huerfanos: transacciones.prestamo_id -> prestamos.id   (valor=0)
+
+== 8. Rendimiento de consultas criticas ==
+                                                                              QUERY PLAN            
+  >                                                                   
+----------------------------------------------------------------------------------------------------
+  > ------------------------------------------------------------------
+ Subquery Scan on vw_cartera_mora  (cost=40.36..40.48 rows=3 width=494) (actual time=0.160..0.177 ro
+  > ws=6 loops=1)
+   Buffers: shared hit=13
+   ->  GroupAggregate  (cost=40.36..40.45 rows=3 width=502) (actual time=0.159..0.176 rows=6 loops=1
+  > )
+         Group Key: s.id, p.id
+         Buffers: shared hit=13
+         ->  Sort  (cost=40.36..40.37 rows=3 width=516) (actual time=0.152..0.156 rows=108 loops=1)
+               Sort Key: s.id, p.id
+               Sort Method: quicksort  Memory: 38kB
+               Buffers: shared hit=13
+               ->  Hash Join  (cost=28.94..40.34 rows=3 width=516) (actual time=0.109..0.123 rows=10
+  > 8 loops=1)
+                     Hash Cond: (s.id = p.socio_id)
+                     Buffers: shared hit=10
+                     ->  Seq Scan on socios s  (cost=0.00..11.00 rows=100 width=384) (actual time=0.
+  > 002..0.007 rows=55 loops=1)
+                           Buffers: shared hit=2
+                     ->  Hash  (cost=28.90..28.90 rows=3 width=140) (actual time=0.098..0.099 rows=1
+  > 08 loops=1)
+                           Buckets: 1024  Batches: 1  Memory Usage: 19kB
+                           Buffers: shared hit=8
+                           ->  Hash Right Join  (cost=11.32..28.90 rows=3 width=140) (actual time=0.
+  > 031..0.081 rows=108 loops=1)
+                                 Hash Cond: (c.prestamo_id = p.id)
+                                 Buffers: shared hit=8
+                                 ->  Seq Scan on cuotas_amortizacion c  (cost=0.00..16.00 rows=600 w
+  > idth=70) (actual time=0.002..0.026 rows=516 loops=1)
+                                       Buffers: shared hit=6
+                                 ->  Hash  (cost=11.28..11.28 rows=3 width=78) (actual time=0.015..0
+  > .015 rows=6 loops=1)
+                                       Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                       Buffers: shared hit=2
+                                       ->  Bitmap Heap Scan on prestamos p  (cost=4.17..11.28 rows=3
+  >  width=78) (actual time=0.010..0.011 rows=6 loops=1)
+                                             Recheck Cond: ((estado)::text = 'moroso'::text)
+                                             Heap Blocks: exact=1
+                                             Buffers: shared hit=2
+                                             ->  Bitmap Index Scan on idx_prestamo_estado  (cost=0.0
+  > 0..4.17 rows=3 width=0) (actual time=0.006..0.006 rows=6 loops=1)
+                                                   Index Cond: ((estado)::text = 'moroso'::text)
+                                                   Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=413
+ Planning Time: 0.554 ms
+ Execution Time: 0.236 ms
+(36 rows)
+                                                                  QUERY PLAN                        
+  >                                           
+----------------------------------------------------------------------------------------------------
+  > ------------------------------------------
+ GroupAggregate  (cost=93.03..269.48 rows=100 width=476) (actual time=0.138..0.235 rows=55 loops=1)
+   Group Key: s.id
+   Buffers: shared hit=4
+   ->  Incremental Sort  (cost=93.03..219.01 rows=2784 width=451) (actual time=0.128..0.155 rows=75 
+  > loops=1)
+         Sort Key: s.id, p.id
+         Presorted Key: s.id
+         Full-sort Groups: 3  Sort Method: quicksort  Average Memory: 28kB  Peak Memory: 28kB
+         Buffers: shared hit=4
+         ->  Merge Left Join  (cost=92.13..115.41 rows=2784 width=451) (actual time=0.099..0.122 row
+  > s=75 loops=1)
+               Merge Cond: (s.id = p.socio_id)
+               Buffers: shared hit=4
+               ->  Sort  (cost=49.71..50.91 rows=480 width=389) (actual time=0.080..0.083 rows=66 lo
+  > ops=1)
+                     Sort Key: s.id
+                     Sort Method: quicksort  Memory: 30kB
+                     Buffers: shared hit=3
+                     ->  Hash Right Join  (cost=12.25..28.33 rows=480 width=389) (actual time=0.043.
+  > .0.062 rows=66 loops=1)
+                           Hash Cond: (ca.socio_id = s.id)
+                           Buffers: shared hit=3
+                           ->  Seq Scan on cuentas_ahorro ca  (cost=0.00..14.80 rows=480 width=33) (
+  > actual time=0.004..0.007 rows=66 loops=1)
+                                 Buffers: shared hit=1
+                           ->  Hash  (cost=11.00..11.00 rows=100 width=364) (actual time=0.023..0.02
+  > 3 rows=55 loops=1)
+                                 Buckets: 1024  Batches: 1  Memory Usage: 12kB
+                                 Buffers: shared hit=2
+                                 ->  Seq Scan on socios s  (cost=0.00..11.00 rows=100 width=364) (ac
+  > tual time=0.005..0.011 rows=55 loops=1)
+                                       Buffers: shared hit=2
+               ->  Sort  (cost=42.42..43.87 rows=580 width=70) (actual time=0.018..0.019 rows=38 loo
+  > ps=1)
+                     Sort Key: p.socio_id
+                     Sort Method: quicksort  Memory: 26kB
+                     Buffers: shared hit=1
+                     ->  Seq Scan on prestamos p  (cost=0.00..15.80 rows=580 width=70) (actual time=
+  > 0.002..0.006 rows=32 loops=1)
+                           Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=397
+ Planning Time: 0.841 ms
+ Execution Time: 0.317 ms
+(35 rows)
+
+Consulta                       MySQL wall(ms)  PG wall(ms)  PG server(ms)
+------------------------------ -------------- ------------ --------------
+vw_cartera_mora                           124          143          0.236
+vw_resumen_saldos_socio                   108          137          0.317
+
+Nota: wall(ms) incluye el overhead de 'docker compose exec' en ambos motores;
+      server(ms) es el 'Execution Time' de EXPLAIN ANALYZE en PostgreSQL.
+
+============================================================
+RESUMEN DE VERIFICACION
+PASS: 41
+FAIL: 0
+============================================================
+RESULTADO: TODAS LAS PRUEBAS PASARON

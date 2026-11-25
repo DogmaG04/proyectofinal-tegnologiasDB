@@ -1,0 +1,40 @@
+% ============================================================================
+%  ANEXO A: ESQUEMAS SQL DEL ORIGEN Y DEL DESTINO
+% ============================================================================
+
+\section{Esquemas SQL del origen y del destino (Anexo A)}
+
+Este anexo reproduce los archivos SQL que definen el sistema de origen y el
+sistema de destino. Se incluyen completos para que el lector pueda recrear el
+entorno sin depender de fragmentos. El esquema de origen corresponde a MySQL
+5.7 y contiene las incompatibilidades deliberadas descritas en el
+Capítulo~III; el esquema de destino corresponde a PostgreSQL 16 e incorpora
+tipos nativos, restricciones \texttt{CHECK}, claves foráneas e identidades.
+
+\subsection{Esquema del origen (MySQL 5.7)}
+
+El archivo \texttt{src/origin/01\_schema\_origin.sql} crea la base
+\texttt{coop\_horizonte\_legacy}, las 8 tablas, las 2 vistas, los índices y el
+usuario \texttt{app\_legacy\_user} con \texttt{GRANT ALL}. Obsérvese el uso de
+\texttt{TINYINT(1)}, \texttt{ENUM}, \texttt{DATETIME}, \texttt{INT UNSIGNED
+AUTO\_INCREMENT} y \texttt{utf8\_general\_ci}.
+
+\lstinputlisting[language=SQL,caption={Esquema completo del origen MySQL 5.7},label={lst:anexo-origen}]{anexos/codigo/01_schema_origin.sql}
+
+\subsection{Esquema del destino (PostgreSQL 16)}
+
+El archivo \texttt{src/target/01\_schema\_target.sql} crea las 8 tablas con
+identidades \texttt{BIGINT}, booleanos, marcas de tiempo con zona horaria,
+restricciones \texttt{CHECK}, 9 claves foráneas, 10 índices y las 3 vistas. La
+zona horaria se fija en \texttt{America/La\_Paz}.
+
+\lstinputlisting[language=SQL,caption={Esquema completo del destino PostgreSQL 16},label={lst:anexo-destino}]{anexos/codigo/01_schema_target.sql}
+
+\subsection{Roles y privilegios}
+
+El archivo \texttt{src/target/02\_hardening\_roles.sql} revoca los privilegios
+de \texttt{PUBLIC}, crea los roles \texttt{admin\_dba}, \texttt{app\_core\_rw}
+y \texttt{auditor\_ro}, y aplica la matriz de mínimo privilegio. También crea
+la vista enmascarada \texttt{vw\_socios\_audit}.
+
+\lstinputlisting[language=SQL,caption={Endurecimiento de roles y privilegios},label={lst:anexo-roles}]{anexos/codigo/02_hardening_roles.sql}

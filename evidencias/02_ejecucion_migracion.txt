@@ -1,0 +1,91 @@
+============================================================
+EJECUCION DE LA MIGRACION Y RESPALDO CIFRADO
+Cooperativa de Ahorro y Credito Horizonte PyME S.R.L.
+Generado: 2026-11-20 08:09:40 -04
+============================================================
+
+[2026-11-20 08:09:40] Esperando servicios ...
+[2026-11-20 08:09:40] Servicio db-origen healthy
+[2026-11-20 08:09:40] Servicio db-destino healthy
+== Conteos en el origen antes de migrar ==
+Tabla                       Filas
+------------------------ --------
+sucursales                      5
+socios                         55
+cuentas_ahorro                 66
+tipos_credito                   5
+solicitudes_credito            50
+prestamos                      32
+cuotas_amortizacion           516
+transacciones                 740
+
+== Respaldo del origen (mysqldump + gzip) ==
+Archivo : /home/dogma/Proyectos/proyectofinal-tegnologiasDB/backups/origin_20261120_080940.sql.gz
+Tamano  : 32K
+SHA256  : 6a2f3a958c4732743302299eb7e4f5d722924f749dbf6fa9764a2936428be3b3
+
+== Ejecucion del ETL hacia PostgreSQL 16 ==
+[ETL] Conectando a MySQL ...
+[ETL] Snapshot consistente de MySQL iniciado
+[ETL] Conectando a PostgreSQL (sslmode=verify-ca) ...
+[ETL] Truncando tablas destino ...
+
+Tabla                       Filas  Tiempo(s)
+----------------------------------------------
+tipos_credito                   5      0.003
+sucursales                      5      0.002
+socios                         55      0.003
+cuentas_ahorro                 66      0.003
+solicitudes_credito            50      0.003
+prestamos                      32      0.002
+cuotas_amortizacion           516      0.014
+transacciones                 740      0.022
+----------------------------------------------
+TOTAL                        1469
+
+[ETL] Reajustando secuencias de identidad ...
+[ETL] Commit aplicado
+
+[ETL] Verificacion de conteos origen vs destino
+Tabla                      Origen  Destino   Estado
+----------------------------------------------------
+tipos_credito                   5        5       OK
+sucursales                      5        5       OK
+socios                         55       55       OK
+cuentas_ahorro                 66       66       OK
+solicitudes_credito            50       50       OK
+prestamos                      32       32       OK
+cuotas_amortizacion           516      516       OK
+transacciones                 740      740       OK
+----------------------------------------------------
+[ETL] Migracion completada correctamente
+
+== Respaldo cifrado del destino (pg_dump -Fc + AES-256-CBC) ==
+Archivo : /home/dogma/Proyectos/proyectofinal-tegnologiasDB/backups/target_20261120_080940.dump.enc
+Tamano  : 68K
+SHA256  : 7017f6905da2e9b317eeb57885cb9d5ef60dff4a90c6efa6de160bf44c1c4d22
+Cifrado : AES-256-CBC + PBKDF2 (200000 iteraciones) + salt
+
+== Prueba de restauracion del respaldo cifrado ==
+Descifrado OK: 68K
+NOTICE:  database "coop_horizonte_restore" does not exist, skipping
+DROP DATABASE
+CREATE DATABASE
+Filas de socios restauradas: 55
+Restauracion: OK (coincide con el origen)
+
+== Comparativa de conteos origen vs destino ==
+Tabla                      Origen  Destino Estado
+------------------------ -------- -------- ------
+sucursales                      5        5 OK
+socios                         55       55 OK
+cuentas_ahorro                 66       66 OK
+tipos_credito                   5        5 OK
+solicitudes_credito            50       50 OK
+prestamos                      32       32 OK
+cuotas_amortizacion           516      516 OK
+transacciones                 740      740 OK
+
+============================================================
+RESULTADO: migracion y respaldo completados sin diferencias de conteo.
+============================================================

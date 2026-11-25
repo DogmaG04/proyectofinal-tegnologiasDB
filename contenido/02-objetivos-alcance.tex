@@ -1,0 +1,61 @@
+% ============================================================================
+%  CAPÍTULO II: OBJETIVOS, ALCANCE Y LÍMITES
+% ============================================================================
+
+\section{Objetivos}
+
+\subsection{Objetivo general}
+
+Migrar de forma íntegra, segura y verificable la base de datos de créditos y
+ahorros de la Cooperativa de Ahorro y Crédito Horizonte PyME S.R.L. desde
+MySQL 5.7 hacia PostgreSQL 16, sobre un entorno Linux reproducible con Docker
+Compose, aplicando endurecimiento, roles de mínimo privilegio, enmascaramiento
+de datos sensibles y respaldos cifrados.
+
+\subsection{Objetivos específicos}
+
+\begin{enumerate}
+  \item Diagnosticar el sistema de origen: versión, tamaño, tablas, vistas,
+        índices, usuarios, privilegios y riesgos de seguridad.
+  \item Identificar y documentar las incompatibilidades de tipos y semántica
+        entre MySQL 5.7 y PostgreSQL 16, con su regla de conversión.
+  \item Diseñar el esquema destino con tipos nativos, restricciones
+        \texttt{CHECK}, claves foráneas, índices y vistas equivalentes.
+  \item Implementar un ETL determinista que preserve identificadores,
+        integridad y zona horaria, y que verifique conteos origen--destino.
+  \item Endurecer PostgreSQL 16 con TLS/SSL obligatorio,
+        \texttt{scram-sha-256}, revocación de \texttt{PUBLIC}, roles granulares
+        y registro de conexiones y DDL.
+  \item Enmascarar documentos, teléfonos, correos y números de cuenta en una
+        vista de auditoría, sin exponer las tablas base.
+  \item Generar respaldos cifrados con AES-256-CBC, calcular su huella
+        SHA-256 y probar la restauración completa.
+  \item Automatizar la auditoría, la migración y la verificación en scripts
+        reproducibles, con evidencias reales en \texttt{evidence/}.
+\end{enumerate}
+
+\section{Alcance y límites}
+
+\subsection{Alcance}
+
+El alcance incluye el entorno de laboratorio completo: los servicios Docker
+de origen y destino, el esquema y los datos sintéticos del origen, el esquema
+destino, el ETL, los scripts de auditoría, migración, respaldo y verificación,
+las evidencias generadas y la documentación técnica del proceso de migración
+y endurecimiento. Se
+cubren las 8 tablas, las 2 vistas, los 19 índices, el usuario legacy, las
+incompatibilidades de tipos, el hardening del motor destino, los roles, el
+enmascaramiento, el cifrado en tránsito y en reposo, y las pruebas de
+integridad y rendimiento básico.
+
+\subsection{Límites}
+
+Quedan fuera del alcance la puesta en producción real, la migración de datos
+históricos de la cooperativa, la modificación del código de la aplicación, la
+implementación de alta disponibilidad con réplicas o \emph{failover}, la
+instalación de un \emph{pool} de conexiones como PgBouncer, la certificación
+formal de cumplimiento normativo y la operación 24×7. Los datos utilizados
+son ficticios y deterministas; no se manipuló información real de personas.
+El entorno se ejecuta en un solo host Linux y no representa una arquitectura
+de producción multizona. Estas exclusiones se documentan para que el lector
+no confunda el laboratorio con un despliegue productivo.

@@ -1,0 +1,117 @@
+% ============================================================================
+%  ANEXO B: SCRIPTS DE AUTOMATIZACIÓN, ETL Y ORQUESTACIÓN
+% ============================================================================
+
+\section{Scripts de automatización, ETL y orquestación (Anexo B)}
+
+Este anexo reproduce los scripts y archivos de configuración que hacen
+reproducible el proyecto. Todos los scripts cargan las variables desde
+\texttt{.env}, esperan a que los servicios estén \emph{healthy} y escriben su
+salida en \texttt{evidence/}. El ETL se ejecuta dentro del contenedor
+\texttt{migrador}; no requiere instalar Python ni controladores en el host.
+
+\subsection{Orquestación con Docker Compose}
+
+El archivo \texttt{docker-compose.yml} define los servicios
+\texttt{db-origen}, \texttt{db-destino} y \texttt{migrador}, además del perfil
+\texttt{docs} para compilar el informe. Los puertos se publican solo en
+\texttt{127.0.0.1}.
+
+\lstinputlisting[language=bash,caption={Orquestación completa con Docker Compose},label={lst:anexo-compose}]{anexos/codigo/docker-compose.yml.txt}
+
+\subsection{Configuración de PostgreSQL}
+
+Los archivos \texttt{postgresql.conf} y \texttt{pg\_hba.conf} establecen TLS
+obligatorio, autenticación \texttt{scram-sha-256}, auditoría de conexiones y
+DDL, zona horaria y bloqueo del acceso remoto de \texttt{postgres}.
+
+\lstinputlisting[language=bash,caption={Configuración del servidor PostgreSQL 16},label={lst:anexo-postgresql-conf}]{anexos/codigo/postgresql.conf}
+
+\lstinputlisting[language=bash,caption={Reglas efectivas de \texttt{pg\_hba.conf}},label={lst:anexo-pg-hba}]{anexos/codigo/pg_hba.conf}
+
+\subsection{Biblioteca común de los scripts}
+
+El archivo \texttt{scripts/lib.sh} centraliza la carga del entorno, la espera
+de servicios, la ejecución de consultas y los conteos. Evita duplicar lógica
+entre los tres scripts principales.
+
+\lstinputlisting[language=bash,caption={Biblioteca común \texttt{lib.sh}},label={lst:anexo-lib}]{anexos/codigo/lib.sh}
+
+\subsection{Auditoría del origen}
+
+El script \texttt{01\_audit\_origin.sh} genera el inventario del origen:
+versión, tamaño, tablas, vistas, índices, usuarios, privilegios e
+incompatibilidades. Su salida se guarda en
+\texttt{evidence/01\_inventario\_origen.txt}.
+
+\lstinputlisting[language=bash,caption={Script de auditoría del origen},label={lst:anexo-audit}]{anexos/codigo/01_audit_origin.sh}
+
+\subsection{Migración y respaldo cifrado}
+
+El script \texttt{02\_migrate\_and\_backup.sh} respalda el origen con
+\texttt{mysqldump}, ejecuta el ETL, respalda el destino con \texttt{pg\_dump
+-Fc}, cifra el resultado con AES-256-CBC y prueba la restauración en una base
+temporal.
+
+\lstinputlisting[language=bash,caption={Script de migración y respaldo cifrado},label={lst:anexo-migrate}]{anexos/codigo/02_migrate_and_backup.sh}
+
+\subsection{Verificación integral}
+
+El script \texttt{03\_verify\_all.sh} ejecuta las 75 comprobaciones de
+hardening, roles, enmascaramiento, conteos, integridad referencial, staging y
+secuencias. Es el archivo que produce la evidencia
+\texttt{03\_pruebas\_y\_hardening.txt}.
+
+\lstinputlisting[language=bash,caption={Script de verificación integral},label={lst:anexo-verify}]{anexos/codigo/03_verify_all.sh}
+
+\subsection{Plantilla pgloader}
+
+El archivo \texttt{src/migration/pgloader/mysql\_to\_stage.load} es la plantilla
+DSL de pgloader que carga las 8 tablas desde MySQL directamente al schema de
+staging \texttt{stg} (sin índices, sin claves foráneas, sin secuencias). Las
+credenciales se inyectan mediante variables de entorno con
+\texttt{envsubst}.
+
+\lstinputlisting[language=SQL,caption={Plantilla pgloader: MySQL a staging},label={lst:anexo-pgloader-load}]{anexos/codigo/mysql_to_stage.load}
+
+\subsection{Renderizado de la plantilla pgloader}
+
+El script \texttt{src/migration/render\_load.sh} renderiza la plantilla
+pgloader sustituyendo solo las variables conocidas, evitando que
+\texttt{envsubst} reemplace cualquier \$\{...\} que aparezca en el DSL.
+
+\lstinputlisting[language=bash,caption={Renderizado de la plantilla pgloader},label={lst:anexo-render-load}]{anexos/codigo/render_load.sh}
+
+\subsection{SQL de staging y migración}
+
+Los archivos SQL que se ejecutan en secuencia durante la migración:
+\emph{prepare} (crea \texttt{stg}), \emph{precheck} (valida antes de tocar
+\texttt{public}), \emph{load} (carga con \texttt{OVERRIDING SYSTEM VALUE}),
+\emph{postcheck} (compara bidireccional con \texttt{to\_jsonb} + \texttt{EXCEPT
+ALL}), \emph{sequences} (\texttt{setval}), \emph{analyze} y \emph{cleanup}
+(elimina \texttt{stg}).
+
+\lstinputlisting[language=SQL,caption={00: Preparación del schema de staging},label={lst:anexo-sql-00}]{anexos/codigo/00_prepare_staging.sql}
+
+\lstinputlisting[language=SQL,caption={10: Precheck de validación de staging},label={lst:anexo-sql-10}]{anexos/codigo/10_precheck.sql}
+
+\lstinputlisting[language=SQL,caption={20: Carga stg → public con OVERRIDING SYSTEM VALUE},label={lst:anexo-sql-20}]{anexos/codigo/20_load.sql}
+
+\lstinputlisting[language=SQL,caption={30: Postcheck bidireccional to\_jsonb + EXCEPT ALL},label={lst:anexo-sql-30}]{anexos/codigo/30_postcheck.sql}
+
+\lstinputlisting[language=SQL,caption={35: Reajuste de secuencias con setval},label={lst:anexo-sql-35}]{anexos/codigo/35_sequences.sql}
+
+\lstinputlisting[language=SQL,caption={40: ANALYZE de estadísticas del planificador},label={lst:anexo-sql-40}]{anexos/codigo/40_analyze.sql}
+
+\lstinputlisting[language=SQL,caption={50: Limpieza y eliminación del schema staging},label={lst:anexo-sql-50}]{anexos/codigo/50_cleanup.sql}
+
+\subsection{ETL en Python (archivado como legado)}
+
+El archivo \texttt{src/migration/legacy/migrate.py} era el ETL artesanal en
+Python (\texttt{pymysql} + \texttt{psycopg2}) que se usó inicialmente. Fue
+archivado como legado y ya no se ejecuta; la migración actual usa pgloader +
+SQL declarativo (secciones anteriores).
+
+\lstinputlisting[language=Python,caption={ETL completo en Python (legado, archivado)},label={lst:anexo-etl}]{anexos/codigo/migrate.py}
+
+\lstinputlisting[language=bash,caption={Imagen del contenedor migrador},label={lst:anexo-dockerfile}]{anexos/codigo/Dockerfile}

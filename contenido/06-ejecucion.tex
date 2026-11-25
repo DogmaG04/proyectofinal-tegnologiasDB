@@ -1,0 +1,479 @@
+% ============================================================================
+%  CAPÍTULO III: DESARROLLO DEL TRABAJO (parte 2)
+% ============================================================================
+
+\section{Ejecución de la migración}
+
+\subsection{Conteos previos y respaldo del origen}
+
+La ejecución comenzó con la verificación de los servicios y el conteo de las
+8 tablas del origen. El script \texttt{02\_migrate\_and\_backup.sh} esperó a
+que \texttt{db-origen} y \texttt{db-destino} estuvieran \emph{healthy} y a que
+el migrador estuviera en ejecución. Luego generó un respaldo del origen con
+\texttt{mysqldump --single-transaction --routines --triggers --events},
+comprimido con \texttt{gzip -9}. El archivo resultante fue
+\texttt{backups/origin\_20261120\_080940.sql.gz}, de 32 KB, con SHA-256
+\texttt{6a2f3a958c4732743302299eb7e4f5d722924f749dbf6fa9764a2936428be3b3}.
+La Tabla~\ref{tab:conteos-previos} reproduce los conteos.
+
+\begin{table}[H]
+  \centering
+  \caption{Conteos del origen antes de la migración}
+  \label{tab:conteos-previos}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{6.4cm}R{3.0cm}@{}}
+        \toprule
+        \textbf{Tabla} & \textbf{Filas} \\
+        \midrule
+        \texttt{sucursales} & 5 \\
+        \texttt{socios} & 55 \\
+        \texttt{cuentas\_ahorro} & 66 \\
+        \texttt{tipos\_credito} & 5 \\
+        \texttt{solicitudes\_credito} & 50 \\
+        \texttt{prestamos} & 32 \\
+        \texttt{cuotas\_amortizacion} & 516 \\
+        \texttt{transacciones} & 740 \\
+        \midrule
+        \textbf{Total} & \textbf{1\,469} \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/02\_ejecucion\_migracion.txt}.}
+\end{table}
+
+\subsection{Ejecución del ETL}
+
+La migración se ejecutó mediante \texttt{scripts/02\_migrate\_and\_backup.sh},
+que orquesta pgloader con schema de staging, precheck, carga transaccional,
+postcheck, reajuste de secuencias, \texttt{ANALYZE} y limpieza. La salida real
+se reproduce a continuación. Se observa el congelamiento de escrituras, el
+respaldo del origen, la carga pgloader a \texttt{stg}, la validación de
+precheck, la carga en una sola transacción, el reajuste de secuencias y el
+respaldo cifrado del destino. El total migrado fue 1\,469 filas con 0 rechazos
+y 0 errores.
+
+\begin{lstlisting}[style=terminal,caption={Salida real de la migración con pgloader + staging},label={lst:salida-etl}]
+== 1. Congelamiento de escrituras ==
+Congelamiento activado en MySQL (coop_horizonte_legacy)
+
+== 2. Respaldo del origen ==
+mysqldump --single-transaction --routines --triggers --events
+Archivo: backups/origin_20261120_080940.sql.gz (32 KB)
+SHA-256: 6a2f3a958c4732743302299eb7e4f5d722924f749dbf6fa9764a2936428be3b3
+
+== 3. Preparación de staging ==
+psql -v ON_ERROR_STOP=1 -f sql/00_prepare_staging.sql
+CREATE SCHEMA stg
+ALTER DEFAULT PRIVILEGES IN SCHEMA stg GRANT ALL ON TABLES TO migration_loader
+
+== 4. Carga pgloader a staging ==
+pgloader mysql_to_stage.load
+... connecting to MySQL ...
+... connecting to PostgreSQL ...
+types_credito:       5 rows
+sucursales:          5 rows
+socios:             55 rows
+cuentas_ahorro:     66 rows
+solicitudes_credito: 50 rows
+prestamos:          32 rows
+cuotas_amortizacion: 516 rows
+transacciones:      740 rows
+Total:            1469 rows, 0 rejects, 0 errors
+ALTER SCHEMA 'coop_horizonte_legacy' RENAME TO 'stg'
+
+== 5. Conteos origen vs staging ==
+tipos_credito:       5  = 5  OK
+sucursales:          5  = 5  OK
+socios:             55  = 55  OK
+cuentas_ahorro:     66  = 66  OK
+solicitudes_credito: 50  = 50  OK
+prestamos:          32  = 32  OK
+cuotas_amortizacion: 516 = 516 OK
+transacciones:      740 = 740 OK
+
+== 6. Precheck ==
+psql -v ON_ERROR_STOP=1 -f sql/10_precheck.sql
+PRECHECK OK: nulos validados
+PRECHECK OK: ENUM dentro de dominio
+PRECHECK OK: sin huérfanos en claves foráneas
+PRECHECK OK: rangos y fechas cero validados
+
+== 7. Carga transaccional (20_load + 30_postcheck + 35_sequences) ==
+psql --single-transaction -v ON_ERROR_STOP=1 -f sql/20_load.sql
+psql --single-transaction -v ON_ERROR_STOP=1 -f sql/30_postcheck.sql
+POSTCHECK OK: EXCEPT ALL bidireccional sin diferencias
+psql --single-transaction -v ON_ERROR_STOP=1 -f sql/35_sequences.sql
+setval OK: 8 secuencias reajustadas
+
+== 8. Estadísticas ==
+psql -U postgres -f sql/40_analyze.sql
+ANALYZE OK
+
+== 9. Limpieza de staging ==
+psql -v ON_ERROR_STOP=1 -f sql/50_cleanup.sql
+DROP SCHEMA stg CASCADE
+
+== 10. Respaldo cifrado del destino ==
+pg_dump -Fc coop_horizonte_core | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt
+Archivo: backups/target_20261120_080940.dump.enc (68 KB)
+SHA-256: 7017f6905da2e9b317eeb57885cb9d5ef60dff4a90c6efa6de160bf44c1c4d22
+
+== 11. Prueba de restauración ==
+Descifrado OK: 68K
+pg_restore en coop_horizonte_restore
+Filas de socios restauradas: 55
+Restauracion: OK (coincide con el origen)
+
+== Total migrado ==
+1469 filas, 0 rechazos, 0 errores
+\end{lstlisting}
+
+\capturaAPA{fig:cap-etl}{Ejecución del ETL hacia PostgreSQL 16}%
+  {captura-ejecucion-etl.png}%
+  {Salida de \texttt{scripts/02\_migrate\_and\_backup.sh} con la carga de las 8 tablas y la verificación de conteos.}
+
+La salida completa del ETL se presenta en el Anexo~C
+(Figura~\ref{fig:anexo-migracion-1}).
+
+\subsection{Respaldo cifrado del destino}
+
+Inmediatamente después de la carga, el script generó un respaldo del destino
+con \texttt{pg\_dump -Fc} y lo cifró con OpenSSL en modo AES-256-CBC, PBKDF2
+con 200\,000 iteraciones y \emph{salt}. El archivo resultante fue
+\texttt{backups/target\_20261120\_080940.dump.enc}, de 68 KB, con SHA-256
+\texttt{7017f6905da2e9b317eeb57885cb9d5ef60dff4a90c6efa6de160bf44c1c4d22}.
+La Tabla~\ref{tab:respaldos} resume los dos respaldos.
+
+\begin{table}[H]
+  \centering
+  \caption{Respaldos generados durante la migración}
+  \label{tab:respaldos}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{3.4cm}L{2.0cm}L{2.0cm}L{5.4cm}@{}}
+        \toprule
+        \textbf{Archivo} & \textbf{Tamaño} & \textbf{Formato} & \textbf{SHA-256 (prefijo)} \\
+        \midrule
+        \texttt{origin\_20261120\_080940.sql.gz} & 32 KB & \texttt{mysqldump} + gzip & \texttt{6a2f3a95\ldots} \\
+        \texttt{target\_20261120\_080940.dump.enc} & 68 KB & \texttt{pg\_dump -Fc} + AES-256-CBC & \texttt{7017f690\ldots} \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/02\_ejecucion\_migracion.txt}.}
+\end{table}
+
+\subsection{Prueba de restauración}
+
+La prueba de restauración descifró el respaldo, creó la base temporal
+\texttt{coop\_horizonte\_restore}, ejecutó \texttt{pg\_restore} y consultó el
+conteo de socios. El resultado fue 55, idéntico al origen. La base temporal se
+eliminó al finalizar. Esta prueba es fundamental: un respaldo que no se
+restaura no es una garantía, es una suposición. El procedimiento se puede
+repetir con cualquier respaldo archivado.
+
+\begin{lstlisting}[style=terminal,caption={Prueba real de restauración del respaldo cifrado},label={lst:restauracion}]
+== Prueba de restauracion del respaldo cifrado ==
+Descifrado OK: 68K
+NOTICE:  database "coop_horizonte_restore" does not exist, skipping
+DROP DATABASE
+CREATE DATABASE
+Filas de socios restauradas: 55
+Restauracion: OK (coincide con el origen)
+\end{lstlisting}
+
+\capturaAPA{fig:cap-restauracion}{Prueba de restauración del respaldo cifrado}%
+  {captura-restauracion.png}%
+  {Descifrado del respaldo, \texttt{pg\_restore} en la base temporal y 55 filas de socios restauradas.}
+
+El respaldo cifrado y la restauración completa se presentan en el Anexo~C
+(Figura~\ref{fig:anexo-migracion-2}).
+
+\section{Respaldo cifrado y recuperación}
+
+\subsection{Estrategia de respaldo}
+
+La estrategia combina dos formatos. El origen se respalda con
+\texttt{mysqldump}, que produce un archivo SQL lógico, portable y fácil de
+inspeccionar; se comprime con gzip para reducir espacio. El destino se
+respalda con \texttt{pg\_dump -Fc}, el formato personalizado de PostgreSQL,
+que permite restaurar selectivamente y comprimir internamente. El respaldo
+del destino se cifra con AES-256-CBC porque contiene datos personales y
+financieros. La Tabla~\ref{tab:respaldo-controles} relaciona cada control con
+su propósito.
+
+\begin{table}[H]
+  \centering
+  \caption{Controles del respaldo y la recuperación}
+  \label{tab:respaldo-controles}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{4.0cm}L{5.2cm}L{5.0cm}@{}}
+        \toprule
+        \textbf{Control} & \textbf{Implementación} & \textbf{Propósito} \\
+        \midrule
+        Consistencia & \texttt{mysqldump --single-transaction} & Respaldo sin bloquear la operación. \\
+        Compresión & \texttt{gzip -9} en el origen; \texttt{-Fc} en el destino & Reducir tamaño y facilitar transferencia. \\
+        Cifrado & AES-256-CBC, PBKDF2 200\,000 iteraciones, \emph{salt} & Proteger la confidencialidad en reposo. \\
+        Integridad & SHA-256 de cada archivo & Detectar corrupción o alteración. \\
+        Restauración & \texttt{pg\_restore} en base temporal y conteo & Verificar que el respaldo es utilizable. \\
+        Retención & Política propuesta de 30 días diarios y 12 meses mensuales & Cumplir operación y auditoría. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+\subsection{Procedimiento de recuperación}
+
+El procedimiento de recuperación tiene cinco pasos: (1) identificar el
+respaldo y verificar su SHA-256; (2) descifrar con la frase de paso correcta;
+(3) crear una base vacía; (4) restaurar con \texttt{pg\_restore}; y (5)
+validar conteos y claves foráneas antes de abrir el servicio. En producción,
+el paso 5 debe incluir una consulta de negocio (por ejemplo, saldos por
+socio) y una revisión de los logs. El RTO estimado es de 30 minutos para el
+volumen actual; el RPO es de 0 minutos para los datos migrados porque el
+respaldo se toma en el corte.
+
+\subsection{Gestión de claves}
+
+En el laboratorio, la frase de paso se guarda en la variable
+\texttt{BACKUP\_PASSPHRASE} del archivo \texttt{.env}, que no se versiona.
+En producción, esa práctica no es suficiente: se recomienda usar un gestor de
+secretos (Vault, AWS Secrets Manager, Azure Key Vault o equivalente), rotar la
+frase de paso periódicamente y separar la custodia de la clave de la custodia
+del respaldo. El cifrado simétrico protege el archivo, pero si la clave y el
+archivo están en el mismo servidor comprometido, la protección se reduce. La
+regla 3-2-1 (tres copias, dos medios, una fuera del sitio) sigue siendo una
+buena referencia.
+
+\section{Pruebas en destino}
+
+\subsection{Resultado global}
+
+El script \texttt{03\_verify\_all.sh} ejecutó 75 comprobaciones y obtuvo
+75 \texttt{PASS} y 0 \texttt{FAIL}. La Tabla~\ref{tab:pruebas-global} resume
+los grupos. Las pruebas no se limitan a verificar que el servidor responde:
+comprueban el valor efectivo de los parámetros, el rechazo de conexiones sin
+SSL, los privilegios de cada rol, el enmascaramiento, los conteos, las claves
+foráneas, el staging, el loader y las secuencias, y el tiempo de ejecución de
+las vistas.
+
+\begin{table}[H]
+  \centering
+  \caption{Resumen de las pruebas en destino}
+  \label{tab:pruebas-global}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{5.6cm}C{2.0cm}C{2.0cm}L{4.4cm}@{}}
+        \toprule
+        \textbf{Grupo} & \textbf{Pruebas} & \textbf{PASS} & \textbf{Resultado} \\
+        \midrule
+        Parámetros de seguridad & 5 & 5 & \texttt{ssl}, \texttt{scram}, logs. \\
+        \texttt{pg\_hba} y conexiones & 4 & 4 & Sin SSL rechazado; \texttt{verify-ca} OK. \\
+        Roles y privilegios & 27 & 27 & 7 roles auditados (3 operación + 1 loader + 4 admin). \\
+        Enmascaramiento & 3 & 3 & CI/NIT y cuentas ocultas. \\
+        Conteos & 8 & 8 & 8 tablas idénticas. \\
+        Integridad referencial & 10 & 10 & 9 FK, 0 huérfanos. \\
+        Staging, loader y secuencias & 18 & 18 & Schema \texttt{stg}; pgloader; \texttt{setval}; \texttt{ANALYZE}. \\
+        \midrule
+        \textbf{Total} & \textbf{75} & \textbf{75} & \textbf{0 FAIL}. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/03\_pruebas\_y\_hardening.txt}.}
+\end{table}
+
+\capturaAPA{fig:cap-pruebas}{Resumen de la verificación en destino}%
+  {captura-pruebas-resumen.png}%
+  {Salida final de \texttt{scripts/03\_verify\_all.sh}: \texttt{PASS: 75} y \texttt{FAIL: 0}.}
+
+Las capturas completas de las pruebas se presentan en el Anexo~C
+(Figuras~\ref{fig:anexo-pruebas-1} a~\ref{fig:anexo-pruebas-3}).
+
+\subsection{Conteos origen--destino}
+
+La Tabla~\ref{tab:comparativa-conteos} compara los conteos. Las 8 filas
+coinciden exactamente. La coincidencia no demuestra por sí sola que los
+valores sean correctos, pero junto con la verificación de claves foráneas y
+la restauración del respaldo proporciona una evidencia sólida de que la carga
+fue completa.
+
+\begin{table}[H]
+  \centering
+  \caption{Comparativa de conteos origen vs. destino}
+  \label{tab:comparativa-conteos}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{6.0cm}R{2.4cm}R{2.4cm}C{2.2cm}@{}}
+        \toprule
+        \textbf{Tabla} & \textbf{Origen} & \textbf{Destino} & \textbf{Estado} \\
+        \midrule
+        \texttt{sucursales} & 5 & 5 & OK \\
+        \texttt{socios} & 55 & 55 & OK \\
+        \texttt{cuentas\_ahorro} & 66 & 66 & OK \\
+        \texttt{tipos\_credito} & 5 & 5 & OK \\
+        \texttt{solicitudes\_credito} & 50 & 50 & OK \\
+        \texttt{prestamos} & 32 & 32 & OK \\
+        \texttt{cuotas\_amortizacion} & 516 & 516 & OK \\
+        \texttt{transacciones} & 740 & 740 & OK \\
+        \midrule
+        \textbf{Total} & \textbf{1\,469} & \textbf{1\,469} & \textbf{OK} \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/03\_pruebas\_y\_hardening.txt}.}
+\end{table}
+
+\subsection{Integridad referencial}
+
+Se verificaron las 9 claves foráneas con consultas de huérfanos. La
+Tabla~\ref{tab:fks} muestra las relaciones y el resultado. Todas devolvieron
+0. La consulta genérica es \texttt{SELECT COUNT(*) FROM hija h LEFT JOIN padre
+p ON h.fk = p.pk WHERE h.fk IS NOT NULL AND p.pk IS NULL}. Si el resultado es
+distinto de cero, la clave foránea no se puede declarar o la carga tiene un
+error.
+
+\begin{table}[H]
+  \centering
+  \caption{Claves foráneas verificadas}
+  \label{tab:fks}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{4.4cm}L{4.4cm}R{2.2cm}@{}}
+        \toprule
+        \textbf{Tabla hija} & \textbf{Tabla padre} & \textbf{Huérfanos} \\
+        \midrule
+        \texttt{cuentas\_ahorro.socio\_id} & \texttt{socios.id} & 0 \\
+        \texttt{solicitudes\_credito.socio\_id} & \texttt{socios.id} & 0 \\
+        \texttt{solicitudes\_credito.tipo\_credito\_id} & \texttt{tipos\_credito.id} & 0 \\
+        \texttt{prestamos.solicitud\_id} & \texttt{solicitudes\_credito.id} & 0 \\
+        \texttt{prestamos.socio\_id} & \texttt{socios.id} & 0 \\
+        \texttt{cuotas\_amortizacion.prestamo\_id} & \texttt{prestamos.id} & 0 \\
+        \texttt{transacciones.socio\_id} & \texttt{socios.id} & 0 \\
+        \texttt{transacciones.cuenta\_ahorro\_id} & \texttt{cuentas\_ahorro.id} & 0 \\
+        \texttt{transacciones.prestamo\_id} & \texttt{prestamos.id} & 0 \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/03\_pruebas\_y\_hardening.txt}.}
+\end{table}
+
+\subsection{Rendimiento de consultas críticas}
+
+Se midieron las dos vistas principales. La Tabla~\ref{tab:rendimiento}
+distingue el tiempo de pared (\emph{wall}) del tiempo de servidor. El primero
+incluye el costo de \texttt{docker compose exec}, la autenticación, la
+transferencia y el formateo; el segundo es el \texttt{Execution Time} de
+\texttt{EXPLAIN ANALYZE} y refleja el trabajo real del motor. Para
+\texttt{vw\_cartera\_mora}, el servidor tardó 0.236 ms; para
+\texttt{vw\_resumen\_saldos\_socio}, 0.317 ms.
+
+\begin{table}[H]
+  \centering
+  \caption{Rendimiento de las vistas críticas}
+  \label{tab:rendimiento}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{5.0cm}R{2.6cm}R{2.6cm}R{2.8cm}@{}}
+        \toprule
+        \textbf{Consulta} & \textbf{MySQL wall (ms)} & \textbf{PG wall (ms)} & \textbf{PG servidor (ms)} \\
+        \midrule
+        \texttt{vw\_cartera\_mora} & 124 & 143 & 0.236 \\
+        \texttt{vw\_resumen\_saldos\_socio} & 108 & 137 & 0.317 \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia con datos de \texttt{evidence/03\_pruebas\_y\_hardening.txt}.}
+\end{table}
+
+El plan de \texttt{vw\_cartera\_mora} usa un \texttt{Bitmap Index Scan} sobre
+\texttt{idx\_prestamo\_estado} para localizar los préstamos morosos, luego un
+\texttt{Hash Join} con socios y cuotas, y un \texttt{GroupAggregate}. El plan
+de \texttt{vw\_resumen\_saldos\_socio} usa \texttt{Merge Left Join} e
+\texttt{Incremental Sort}. Para el volumen actual, los \texttt{Seq Scan} sobre
+tablas pequeñas son razonables; a mayor escala, el optimizador podría cambiar
+a índices si las estadísticas y la selectividad lo justifican. La lección es
+que el rendimiento debe medirse con \texttt{EXPLAIN (ANALYZE, BUFFERS)} y no
+suponerse por el tamaño de la tabla.
+
+\section{Confidencialidad y escalabilidad}
+
+\subsection{Clasificación de la información}
+
+La Tabla~\ref{tab:clasificacion} clasifica los datos tratados. Los datos
+personales y financieros son confidenciales o restringidos. La clasificación
+guía las medidas: los datos restringidos solo se exponen a través de vistas
+enmascaradas; los confidenciales se cifran en tránsito y en reposo; los
+internos se protegen con roles; y los públicos pueden compartirse sin
+restricción adicional.
+
+\begin{table}[H]
+  \centering
+  \caption{Clasificación de la información}
+  \label{tab:clasificacion}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{2.8cm}L{5.0cm}L{6.0cm}@{}}
+        \toprule
+        \textbf{Nivel} & \textbf{Ejemplos} & \textbf{Control principal} \\
+        \midrule
+        Restringido & CI/NIT, número de cuenta, teléfono, correo, dirección. & Enmascaramiento en \texttt{vw\_socios\_audit}; sin acceso directo para \texttt{auditor\_ro}. \\
+        Confidencial & Saldos, montos de crédito, cuotas, transacciones. & TLS, roles, respaldo cifrado, auditoría. \\
+        Interno & Catálogos de sucursales y tipos de crédito. & Roles y registros de acceso. \\
+        Público & Documentación, scripts, informe. & Sin restricción adicional. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+\subsection{Controles de confidencialidad}
+
+Los controles se organizan en cuatro momentos: en tránsito, en reposo, en uso
+y en auditoría. En tránsito, TLS 1.2+ con \texttt{hostssl} y
+\texttt{scram-sha-256}. En reposo, AES-256-CBC para respaldos y permisos
+\texttt{600} para la clave privada. En uso, roles de mínimo privilegio y
+vistas enmascaradas. En auditoría, registros de conexión, desconexión y DDL,
+más la separación del rol \texttt{auditor\_ro}. La combinación es más fuerte
+que cualquier control aislado: si un atacante obtiene una credencial de
+aplicación, no puede leer la tabla de socios; si obtiene un respaldo, no puede
+descifrarlo sin la frase de paso; si intenta conectarse sin TLS, el servidor
+lo rechaza.
+
+\subsection{Escalabilidad}
+
+El diseño actual es adecuado para el volumen de la cooperativa, pero la
+escalabilidad requiere un plan. La Tabla~\ref{tab:escalabilidad} propone
+medidas por horizonte. A corto plazo, se recomienda añadir un \emph{pool} de
+conexiones (PgBouncer), monitorear consultas lentas y ajustar
+\texttt{autovacuum}. A mediano plazo, particionar \texttt{transacciones} por
+fecha y crear índices parciales para los estados más consultados. A largo
+plazo, evaluar réplicas de lectura para reportes y una arquitectura de alta
+disponibilidad con \emph{failover}.
+
+\begin{table}[H]
+  \centering
+  \caption{Medidas de escalabilidad por horizonte}
+  \label{tab:escalabilidad}
+  \contenidoConFuente{%
+    \begin{tablaAPA}
+      \begin{tabular}{@{}L{2.4cm}L{6.2cm}L{5.6cm}@{}}
+        \toprule
+        \textbf{Horizonte} & \textbf{Medida} & \textbf{Beneficio} \\
+        \midrule
+        Corto plazo & PgBouncer, monitoreo de consultas lentas, ajuste de \texttt{autovacuum}. & Menos conexiones, mejor uso de recursos. \\
+        Mediano plazo & Particionamiento de \texttt{transacciones} por rango de fechas; índices parciales. & Consultas históricas más rápidas; mantenimiento por partición. \\
+        Largo plazo & Réplicas de lectura para reportes; alta disponibilidad con \emph{failover}. & Escalabilidad horizontal y continuidad. \\
+        Transversal & Capacitación, documentación y pruebas de carga periódicas. & Operación sostenible y decisiones basadas en datos. \\
+        \bottomrule
+      \end{tabular}
+    \end{tablaAPA}%
+  }{Elaboración propia.}
+\end{table}
+
+La escalabilidad no es solo agregar hardware: es evitar cuellos de botella
+conocidos. Un \emph{pool} mal configurado puede ser peor que no tenerlo; un
+índice innecesario ralentiza las escrituras; una réplica retrasada puede
+servir datos obsoletos. Por eso las medidas se proponen por horizonte y con
+métricas de validación, no como una lista de deseos.

@@ -1,0 +1,105 @@
+% ============================================================================
+%  INFORME FINAL — Migración MySQL 5.7 -> PostgreSQL 16
+%  Cooperativa de Ahorro y Crédito Horizonte PyME S.R.L.
+%  ----------------------------------------------------------------------------
+%  Regla de oro del proyecto:
+%    - formato/datos-institucion.sty -> datos compartidos (institución, logo)
+%    - formato/preambulo.sty         -> toda la configuración (APA + Arial)
+%    - formato/portada.tex           -> portada (datos institucionales)
+%    - formato/referencias.bib       -> bibliografía BibTeX
+%    - contenido/*.tex               -> el contenido real del informe
+%    - anexos/*.tex                  -> material complementario
+%    - main.tex                      -> integración + datos del documento
+%
+%  Compilar (desde la raíz de docs/):
+%    make
+% ============================================================================
+
+\documentclass[12pt,a4paper]{article}
+
+\usepackage{formato/preambulo}
+\usepackage{formato/datos-institucion}
+
+% ============================================================================
+%  DATOS DEL DOCUMENTO
+% ============================================================================
+\newcommand{\tituloDocumento}{Migración heterogénea y endurecimiento de una base de datos financiera: de MySQL 5.7 a PostgreSQL 16 con Docker Compose}
+\newcommand{\equipo}{Sudoers}
+\newcommand{\integrantes}{%
+  Joaquín Alessandro Felipez Rojas \par
+  David Willy Cruz Huanca \par
+  Nicolás Sebastián Reguerín Meneses \par
+  Gustavo Abel Ignacio Mejía}
+\newcommand{\asignatura}{Tecnología de Base de Datos I}
+\newcommand{\docente}{Lineth Cindy Coca Rojas}
+\newcommand{\fechaEntrega}{20/11/2026}
+
+\begin{document}
+
+\pagenumbering{roman}
+\input{formato/portada}
+
+\newpage
+{\indicesCompactos\tableofcontents}
+\newpage
+{\indicesCompactos\listoftables}
+\newpage
+{\indicesCompactos\listoffigures}
+\clearpage
+
+\pagenumbering{arabic}
+
+% --- CAPÍTULO I --------------------------------------------------------------
+\caratulaCapitulo{CAPÍTULO I}{INTRODUCCIÓN Y CLIENTE}
+\input{contenido/01-introduccion}
+
+% --- CAPÍTULO II -------------------------------------------------------------
+\caratulaCapitulo{CAPÍTULO II}{OBJETIVOS, ALCANCE Y LÍMITES}
+\input{contenido/02-objetivos-alcance}
+
+% --- CAPÍTULO III ------------------------------------------------------------
+\caratulaCapitulo{CAPÍTULO III}{DIAGNÓSTICO DEL ORIGEN Y HARDENING DEL DESTINO}
+\input{contenido/03-diagnostico}
+\input{contenido/04-hardening}
+
+% --- CAPÍTULO IV -------------------------------------------------------------
+\caratulaCapitulo{CAPÍTULO IV}{DESARROLLO DEL TRABAJO}
+\input{contenido/05-plan-migracion}
+\input{contenido/06-ejecucion}
+\input{contenido/07-operacion}
+
+% --- CONCLUSIONES ------------------------------------------------------------
+\newpage
+\encabezadoCapitulo{CONCLUSIONES}{}
+\addcontentsline{toc}{part}{CONCLUSIONES}
+\begingroup
+\setcounter{capitulo}{5}
+\setcounter{section}{0}
+\renewcommand{\thesection}{5.\arabic{section}}
+\renewcommand{\theHsection}{5.\arabic{section}}
+\renewcommand{\thesubsection}{5.\arabic{section}.\arabic{subsection}}
+\renewcommand{\theHsubsection}{5.\arabic{section}.\arabic{subsection}}
+\renewcommand{\thesubsubsection}{5.\arabic{section}.\arabic{subsection}.\arabic{subsubsection}}
+\renewcommand{\theHsubsubsection}{5.\arabic{section}.\arabic{subsection}.\arabic{subsubsection}}
+\input{contenido/08-conclusiones}
+\endgroup
+
+% --- Referencias -------------------------------------------------------------
+\newpage
+\encabezadoCapitulo{REFERENCIAS}{}
+\addcontentsline{toc}{part}{REFERENCIAS}
+\bibliographystyle{apacite}
+\nocite{*}
+\bibliography{formato/referencias}
+
+% --- Anexos ------------------------------------------------------------------
+\newpage
+\encabezadoCapitulo{ANEXOS}{}
+\pdfbookmark[0]{ANEXOS}{anexos}%
+\addcontentsline{toc}{part}{ANEXOS}
+\appendix
+\input{anexos/anexo-a}
+\input{anexos/anexo-b}
+\input{anexos/anexo-c}
+
+\end{document}
